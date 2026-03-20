@@ -4,6 +4,8 @@ A browser-based chat interface for local LLMs powered by [Ollama](https://ollama
 
 This project is a **demo for educational purposes** — it exposes the internals of how LLMs actually work under the hood so you can learn by watching.
 
+![Ollamable screenshot](docs/screenshot.png)
+
 ## What you can learn
 
 - **Tool/function calling** — see how models request tool invocations, how arguments are structured, and how results flow back into the conversation
