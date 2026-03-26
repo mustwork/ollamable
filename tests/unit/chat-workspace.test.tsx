@@ -5,6 +5,19 @@ import { ChatWorkspace } from "@/src/components/chat-workspace";
 import { fetchModelMeta, streamAssistantResponse } from "@/src/lib/ollama";
 import { SELECTED_KEY, STORAGE_KEY } from "@/src/lib/chat";
 
+vi.mock("@/src/lib/use-websocket", () => ({
+  useWebSocket: () => ({ send: vi.fn(), connected: false, lastMessage: null }),
+}));
+
+vi.mock("@/src/lib/backend-client", () => ({
+  BackendClient: vi.fn().mockImplementation(() => ({
+    handleServerMessage: vi.fn(),
+    startStream: vi.fn(),
+    cancelAll: vi.fn(),
+  })),
+  WS_URL: "ws://localhost:3001",
+}));
+
 vi.mock("@/src/lib/ollama", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/src/lib/ollama")>();
 

@@ -4,7 +4,25 @@ export type StepKind =
   | "assistant"
   | "reasoning"
   | "tool_call"
-  | "tool_result";
+  | "tool_result"
+  | "meta";
+
+export type MetaEventKind =
+  | "mcp_connect"
+  | "mcp_call"
+  | "mcp_result"
+  | "search_start"
+  | "search_result"
+  | "context_start"
+  | "context_done";
+
+export interface MetaEventPayload {
+  kind: MetaEventKind;
+  title: string;
+  detail: string;
+  data?: Record<string, unknown>;
+  durationMs?: number;
+}
 
 export interface ToolDefinition {
   id: string;
@@ -31,6 +49,7 @@ export interface ConversationStep {
   expanded?: boolean;
   toolCall?: ToolCallPayload;
   toolResult?: ToolResultPayload;
+  metaEvent?: MetaEventPayload;
 }
 
 export interface Conversation {

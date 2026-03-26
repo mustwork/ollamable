@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AppBar,
@@ -38,11 +38,15 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditIcon from "@mui/icons-material/Edit";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import CloudIcon from "@mui/icons-material/Cloud";
+import CloudOffIcon from "@mui/icons-material/CloudOff";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import MemoryIcon from "@mui/icons-material/Memory";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import ReplayIcon from "@mui/icons-material/Replay";
+import SearchIcon from "@mui/icons-material/Search";
 import StopIcon from "@mui/icons-material/Stop";
+import SyncIcon from "@mui/icons-material/Sync";
 import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta } from "@/src/types/chat";
 import { configuredTools } from "@/src/config/tools";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
@@ -63,6 +67,8 @@ import {
   fetchModels,
   streamAssistantResponse,
 } from "@/src/lib/ollama";
+import { useWebSocket } from "@/src/lib/use-websocket";
+import { BackendClient, WS_URL } from "@/src/lib/backend-client";
 
 const SIDEBAR_WIDTH = 320;
 const APP_BAR_HEIGHT = 65;
@@ -94,9 +100,20 @@ export function ChatWorkspace() {
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [stepDraft, setStepDraft] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const stopStreamRef = useRef<(() => void) | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const previousSelectedConversationIdRef = useRef<string>("");
   const previousHasStreamingStepsRef = useRef(false);
+  const backendClientRef = useRef(new BackendClient());
+
+  const handleWsMessage = useCallback(
+    (data: unknown) => {
+      backendClientRef.current.handleServerMessage(data);
+    },
+    []
+  );
+
+  const { send: wsSend, connected: wsConnected } = useWebSocket(WS_URL, handleWsMessage);
 
   useEffect(() => {
     const initialConversations = loadConversations(configuredTools);
@@ -390,74 +407,152 @@ export function ChatWorkspace() {
     handleCancelTitleEdit();
   }
 
+  function applyDelta(conversationId: string, partialSteps: ConversationStep[]) {
+    updateConversation(conversationId, (conversation) => {
+      const stableSteps = conversation.steps.filter(
+        (step) =>
+          !step.id.startsWith("stream-") &&
+          (step.kind === "system" ||
+            step.kind === "user" ||
+            step.kind === "assistant" ||
+            step.kind === "reasoning" ||
+            step.kind === "tool_call" ||
+            step.kind === "tool_result" ||
+            step.kind === "meta")
+      );
+
+      const nextStreamingSteps = partialSteps.map((step) => ({
+        ...step,
+        id: `stream-${step.id}`,
+        expanded: true,
+      }));
+
+      return {
+        ...conversation,
+        steps: [...stableSteps, ...nextStreamingSteps],
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  function applyMetaEvent(conversationId: string, metaStep: ConversationStep) {
+    updateConversation(conversationId, (conversation) => {
+      // Insert meta step before streaming steps so it appears above the current stream
+      const streamingIdx = conversation.steps.findIndex((s) => s.id.startsWith("stream-"));
+      const insertIdx = streamingIdx === -1 ? conversation.steps.length : streamingIdx;
+      const nextSteps = [...conversation.steps];
+      nextSteps.splice(insertIdx, 0, metaStep);
+      return {
+        ...conversation,
+        steps: nextSteps,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
   async function streamConversationResponse(
     nextConversation: Conversation,
     options?: { prompt?: string }
   ) {
-    const controller = new AbortController();
-    abortRef.current = controller;
     setError("");
     setStreaming(true);
 
-    try {
-      const responseSteps = await streamAssistantResponse({
-        conversation: nextConversation,
-        prompt: options?.prompt,
-        tools: nextConversation.availableTools.filter((tool) =>
-          nextConversation.activeToolIds.includes(tool.id)
-        ),
-        signal: controller.signal,
-        onDelta: (partialSteps) => {
-          updateConversation(nextConversation.id, (conversation) => {
-            const stableSteps = conversation.steps.filter(
-              (step) =>
-                step.kind === "system" ||
-                step.kind === "user" ||
-                step.kind === "assistant" ||
-                step.kind === "reasoning" ||
-                step.kind === "tool_call" ||
-                step.kind === "tool_result"
-            );
+    const activeTools = nextConversation.availableTools.filter((tool) =>
+      nextConversation.activeToolIds.includes(tool.id)
+    );
 
-            const withoutStreamingTail = stableSteps.filter(
-              (step) => !step.id.startsWith("stream-")
-            );
+    // Build the steps to send — include prompt as a user step if provided
+    const stepsToSend = options?.prompt
+      ? [
+          ...nextConversation.steps,
+          {
+            id: `prompt-${Date.now()}`,
+            kind: "user" as const,
+            title: "User",
+            content: options.prompt,
+            createdAt: new Date().toISOString(),
+            expanded: true,
+          },
+        ]
+      : nextConversation.steps;
 
-            const nextStreamingSteps = partialSteps.map((step) => ({
-              ...step,
-              id: `stream-${step.id}`,
-              expanded: true,
-            }));
-
-            return {
-              ...conversation,
-              steps: [...withoutStreamingTail, ...nextStreamingSteps],
-              updatedAt: new Date().toISOString(),
-            };
-          });
-        },
+    if (wsConnected) {
+      // Use WebSocket backend
+      const { promise, stop } = backendClientRef.current.startStream(wsSend, {
+        conversationId: nextConversation.id,
+        model: nextConversation.model,
+        steps: stepsToSend,
+        tools: activeTools,
+        temperature: nextConversation.temperature,
+        onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
+        onMetaEvent: (metaStep) => applyMetaEvent(nextConversation.id, metaStep),
       });
+      stopStreamRef.current = stop;
 
-      updateConversation(nextConversation.id, (conversation) => ({
-        ...conversation,
-        steps: [...conversation.steps.filter((step) => !step.id.startsWith("stream-")), ...responseSteps],
-        updatedAt: new Date().toISOString(),
-      }));
-    } catch (streamError) {
-      const message =
-        streamError instanceof Error && streamError.name === "AbortError"
+      try {
+        const responseSteps = await promise;
+        updateConversation(nextConversation.id, (conversation) => ({
+          ...conversation,
+          steps: [
+            ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
+            ...responseSteps,
+          ],
+          updatedAt: new Date().toISOString(),
+        }));
+      } catch (streamError) {
+        const isAbort =
+          streamError instanceof Error && streamError.message === "AbortError";
+        const message = isAbort
           ? "Generation stopped."
-          : "Failed to stream from Ollama. Check that the local server is running.";
+          : "Failed to stream from backend.";
+        setError(message);
+        updateConversation(nextConversation.id, (conversation) => ({
+          ...conversation,
+          steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
+          updatedAt: new Date().toISOString(),
+        }));
+      } finally {
+        stopStreamRef.current = null;
+        setStreaming(false);
+      }
+    } else {
+      // Fallback: direct Ollama fetch
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-      setError(message);
-      updateConversation(nextConversation.id, (conversation) => ({
-        ...conversation,
-        steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-        updatedAt: new Date().toISOString(),
-      }));
-    } finally {
-      abortRef.current = null;
-      setStreaming(false);
+      try {
+        const responseSteps = await streamAssistantResponse({
+          conversation: nextConversation,
+          prompt: options?.prompt,
+          tools: activeTools,
+          signal: controller.signal,
+          onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
+        });
+
+        updateConversation(nextConversation.id, (conversation) => ({
+          ...conversation,
+          steps: [
+            ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
+            ...responseSteps,
+          ],
+          updatedAt: new Date().toISOString(),
+        }));
+      } catch (streamError) {
+        const message =
+          streamError instanceof Error && streamError.name === "AbortError"
+            ? "Generation stopped."
+            : "Failed to stream from Ollama. Check that the local server is running.";
+
+        setError(message);
+        updateConversation(nextConversation.id, (conversation) => ({
+          ...conversation,
+          steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
+          updatedAt: new Date().toISOString(),
+        }));
+      } finally {
+        abortRef.current = null;
+        setStreaming(false);
+      }
     }
   }
 
@@ -720,6 +815,7 @@ export function ChatWorkspace() {
 
   function handleStop() {
     abortRef.current?.abort();
+    stopStreamRef.current?.();
   }
 
   async function handleCopyRequestJson() {
@@ -833,6 +929,15 @@ export function ChatWorkspace() {
               </Select>
             </FormControl>
           ) : null}
+          <Tooltip title={wsConnected ? "Backend connected" : "Backend disconnected (using direct Ollama)"}>
+            <Box sx={{ display: "flex", alignItems: "center", mr: 1 }}>
+              {wsConnected ? (
+                <CloudIcon fontSize="small" sx={{ color: "success.main" }} />
+              ) : (
+                <CloudOffIcon fontSize="small" sx={{ color: "text.disabled" }} />
+              )}
+            </Box>
+          </Tooltip>
           <ColorModeToggle />
         </Toolbar>
       </AppBar>
@@ -1046,15 +1151,24 @@ export function ChatWorkspace() {
                           }}
                         >
                           <ListItemButton onClick={() => handleToggleStep(step.id)}>
+                            {step.kind === "meta" ? (
+                              <Box sx={{ mr: 1.5, display: "flex", color: "#00bcd4" }}>
+                                {getMetaEventIcon(step.metaEvent?.kind)}
+                              </Box>
+                            ) : null}
                             <ListItemText
                               primary={step.title}
-                              secondary={`${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`}
+                              secondary={
+                                step.kind === "meta" && step.metaEvent?.durationMs != null
+                                  ? `${step.metaEvent.kind.replace(/_/g, " ")} • ${step.metaEvent.durationMs}ms`
+                                  : `${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`
+                              }
                               primaryTypographyProps={{ fontWeight: 700, textTransform: "capitalize" }}
                             />
                             <Chip
                               size="small"
-                              label={step.kind}
-                              color={step.kind === "assistant" ? "primary" : "default"}
+                              label={step.kind === "meta" ? step.metaEvent?.kind?.replace(/_/g, " ") ?? "meta" : step.kind}
+                              color={step.kind === "assistant" ? "primary" : step.kind === "meta" ? "info" : "default"}
                               variant="outlined"
                               sx={{ mr: 1 }}
                             />
@@ -1130,6 +1244,24 @@ export function ChatWorkspace() {
                                   </Typography>
                                   <Typography variant="body2" sx={{ mt: 1, fontFamily: "monospace" }}>
                                     {step.toolResult.name}
+                                  </Typography>
+                                </Paper>
+                              ) : null}
+                              {step.metaEvent?.data ? (
+                                <Paper
+                                  variant="outlined"
+                                  sx={{
+                                    p: 2,
+                                    mb: 2,
+                                    backgroundColor: "var(--surface-inset)",
+                                    borderColor: alpha("#00bcd4", 0.3),
+                                  }}
+                                >
+                                  <Typography variant="overline" sx={{ color: "#00bcd4" }}>
+                                    Server Event Data
+                                  </Typography>
+                                  <Typography variant="body2" sx={{ mt: 1, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+                                    {JSON.stringify(step.metaEvent.data, null, 2)}
                                   </Typography>
                                 </Paper>
                               ) : null}
@@ -1474,7 +1606,12 @@ export function ChatWorkspace() {
 }
 
 function isVisibleTranscriptStep(step: ConversationStep) {
-  return step.kind === "user" || step.kind === "assistant" || step.kind === "reasoning";
+  return (
+    step.kind === "user" ||
+    step.kind === "assistant" ||
+    step.kind === "reasoning" ||
+    step.kind === "meta"
+  );
 }
 
 function getStepBackgroundColor(
@@ -1495,6 +1632,8 @@ function getStepBackgroundColor(
         return alpha(theme.palette.secondary.dark, 0.18);
       case "tool_result":
         return alpha(theme.palette.error.dark, 0.22);
+      case "meta":
+        return alpha("#00bcd4", 0.15);
       default:
         return alpha(theme.palette.background.paper, 0.9);
     }
@@ -1513,6 +1652,8 @@ function getStepBackgroundColor(
       return alpha(theme.palette.secondary.light, 0.15);
     case "tool_result":
       return alpha(theme.palette.error.light, 0.18);
+    case "meta":
+      return alpha("#00bcd4", 0.12);
     default:
       return alpha(theme.palette.background.paper, 0.92);
   }
@@ -1654,6 +1795,23 @@ function formatKeyValueSummary(modelMeta: OllamaModelMeta) {
   ].filter(([, value]) => Boolean(value));
 
   return entries.map(([key, value]) => `${key}: ${value}`).join("\n");
+}
+
+function getMetaEventIcon(kind?: string) {
+  switch (kind) {
+    case "mcp_connect":
+    case "mcp_call":
+    case "mcp_result":
+      return <SyncIcon fontSize="small" />;
+    case "search_start":
+    case "search_result":
+      return <SearchIcon fontSize="small" />;
+    case "context_start":
+    case "context_done":
+      return <MemoryIcon fontSize="small" />;
+    default:
+      return <CloudIcon fontSize="small" />;
+  }
 }
 
 async function copyTextToClipboard(value: string) {
