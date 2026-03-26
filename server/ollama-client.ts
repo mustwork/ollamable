@@ -5,6 +5,9 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_URL ?? "http://localhost:11434/api";
 
 interface StreamChunk {
   done?: boolean;
+  done_reason?: string;
+  prompt_eval_count?: number;
+  eval_count?: number;
   message?: {
     content?: string;
     thinking?: string;
@@ -158,6 +161,13 @@ function processStreamLine(
   onDelta(nextSteps);
 
   if (chunk.done) {
+    if (chunk.prompt_eval_count != null || chunk.eval_count != null || chunk.done_reason) {
+      assistantStep.usage = {
+        ...(chunk.prompt_eval_count != null ? { inputTokens: chunk.prompt_eval_count } : {}),
+        ...(chunk.eval_count != null ? { outputTokens: chunk.eval_count } : {}),
+        ...(chunk.done_reason ? { stopReason: chunk.done_reason } : {}),
+      };
+    }
     return { done: true, steps: nextSteps, reasoningStep };
   }
 

@@ -23,6 +23,12 @@ export type StepKind =
   | "tool_result"
   | "meta";
 
+export interface UsagePayload {
+  inputTokens?: number;
+  outputTokens?: number;
+  stopReason?: string;
+}
+
 export interface ConversationStep {
   id: string;
   kind: StepKind;
@@ -33,6 +39,7 @@ export interface ConversationStep {
   toolCall?: ToolCallPayload;
   toolResult?: ToolResultPayload;
   metaEvent?: MetaEventPayload;
+  usage?: UsagePayload;
 }
 
 export interface MetaEventPayload {

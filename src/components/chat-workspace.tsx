@@ -65,7 +65,6 @@ import {
   buildOllamaChatBody,
   fetchModelMeta,
   fetchModels,
-  streamAssistantResponse,
 } from "@/src/lib/ollama";
 import { useWebSocket } from "@/src/lib/use-websocket";
 import { BackendClient, WS_URL } from "@/src/lib/backend-client";
@@ -99,7 +98,6 @@ export function ChatWorkspace() {
   const [titleDraft, setTitleDraft] = useState("");
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [stepDraft, setStepDraft] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
   const stopStreamRef = useRef<(() => void) | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const previousSelectedConversationIdRef = useRef<string>("");
@@ -476,83 +474,48 @@ export function ChatWorkspace() {
         ]
       : nextConversation.steps;
 
-    if (wsConnected) {
-      // Use WebSocket backend
-      const { promise, stop } = backendClientRef.current.startStream(wsSend, {
-        conversationId: nextConversation.id,
-        model: nextConversation.model,
-        steps: stepsToSend,
-        tools: activeTools,
-        temperature: nextConversation.temperature,
-        onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
-        onMetaEvent: (metaStep) => applyMetaEvent(nextConversation.id, metaStep),
-      });
-      stopStreamRef.current = stop;
+    if (!wsConnected) {
+      setError("Backend is not connected. Make sure the server is running (make dev).");
+      setStreaming(false);
+      return;
+    }
 
-      try {
-        const responseSteps = await promise;
-        updateConversation(nextConversation.id, (conversation) => ({
-          ...conversation,
-          steps: [
-            ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-            ...responseSteps,
-          ],
-          updatedAt: new Date().toISOString(),
-        }));
-      } catch (streamError) {
-        const isAbort =
-          streamError instanceof Error && streamError.message === "AbortError";
-        const message = isAbort
-          ? "Generation stopped."
-          : "Failed to stream from backend.";
-        setError(message);
-        updateConversation(nextConversation.id, (conversation) => ({
-          ...conversation,
-          steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-          updatedAt: new Date().toISOString(),
-        }));
-      } finally {
-        stopStreamRef.current = null;
-        setStreaming(false);
-      }
-    } else {
-      // Fallback: direct Ollama fetch
-      const controller = new AbortController();
-      abortRef.current = controller;
+    const { promise, stop } = backendClientRef.current.startStream(wsSend, {
+      conversationId: nextConversation.id,
+      model: nextConversation.model,
+      steps: stepsToSend,
+      tools: activeTools,
+      temperature: nextConversation.temperature,
+      onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
+      onMetaEvent: (metaStep) => applyMetaEvent(nextConversation.id, metaStep),
+    });
+    stopStreamRef.current = stop;
 
-      try {
-        const responseSteps = await streamAssistantResponse({
-          conversation: nextConversation,
-          prompt: options?.prompt,
-          tools: activeTools,
-          signal: controller.signal,
-          onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
-        });
-
-        updateConversation(nextConversation.id, (conversation) => ({
-          ...conversation,
-          steps: [
-            ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-            ...responseSteps,
-          ],
-          updatedAt: new Date().toISOString(),
-        }));
-      } catch (streamError) {
-        const message =
-          streamError instanceof Error && streamError.name === "AbortError"
-            ? "Generation stopped."
-            : "Failed to stream from Ollama. Check that the local server is running.";
-
-        setError(message);
-        updateConversation(nextConversation.id, (conversation) => ({
-          ...conversation,
-          steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-          updatedAt: new Date().toISOString(),
-        }));
-      } finally {
-        abortRef.current = null;
-        setStreaming(false);
-      }
+    try {
+      const responseSteps = await promise;
+      updateConversation(nextConversation.id, (conversation) => ({
+        ...conversation,
+        steps: [
+          ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
+          ...responseSteps,
+        ],
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (streamError) {
+      const isAbort =
+        streamError instanceof Error && streamError.message === "AbortError";
+      const message = isAbort
+        ? "Generation stopped."
+        : "Failed to stream from backend.";
+      setError(message);
+      updateConversation(nextConversation.id, (conversation) => ({
+        ...conversation,
+        steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
+        updatedAt: new Date().toISOString(),
+      }));
+    } finally {
+      stopStreamRef.current = null;
+      setStreaming(false);
     }
   }
 
@@ -760,12 +723,11 @@ export function ChatWorkspace() {
       steps: [...selectedConversation.steps, toolResultStep],
     };
 
-    // Reuse streamConversationResponse so the WebSocket/fallback logic is consistent
+    // Reuse streamConversationResponse so tool results go through the backend
     await streamConversationResponse(nextConversation);
   }
 
   function handleStop() {
-    abortRef.current?.abort();
     stopStreamRef.current?.();
   }
 
@@ -1109,11 +1071,7 @@ export function ChatWorkspace() {
                             ) : null}
                             <ListItemText
                               primary={step.title}
-                              secondary={
-                                step.kind === "meta" && step.metaEvent?.durationMs != null
-                                  ? `${step.metaEvent.kind.replace(/_/g, " ")} • ${step.metaEvent.durationMs}ms`
-                                  : `${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`
-                              }
+                              secondary={formatStepSecondary(step)}
                               primaryTypographyProps={{ fontWeight: 700, textTransform: "capitalize" }}
                             />
                             <Chip
@@ -1563,6 +1521,24 @@ function isVisibleTranscriptStep(step: ConversationStep) {
     step.kind === "reasoning" ||
     step.kind === "meta"
   );
+}
+
+function formatStepSecondary(step: ConversationStep): string {
+  if (step.kind === "meta" && step.metaEvent?.durationMs != null) {
+    return `${step.metaEvent.kind.replace(/_/g, " ")} • ${step.metaEvent.durationMs}ms`;
+  }
+
+  const base = `${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`;
+
+  if (step.usage) {
+    const parts: string[] = [];
+    if (step.usage.inputTokens != null) parts.push(`in: ${step.usage.inputTokens}`);
+    if (step.usage.outputTokens != null) parts.push(`out: ${step.usage.outputTokens}`);
+    if (step.usage.stopReason) parts.push(`stop: ${step.usage.stopReason}`);
+    if (parts.length > 0) return `${base} • ${parts.join(" / ")}`;
+  }
+
+  return base;
 }
 
 function getStepBackgroundColor(

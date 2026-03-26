@@ -719,3 +719,153 @@ test("handles multiple sequential delta messages that build up the response", as
 
   await expect(page.getByText("First chunk. Second chunk. Final chunk.")).toBeVisible();
 });
+
+test("displays input/output tokens and stop reason on assistant steps", async ({ page }) => {
+  wsHandler = (data, ws) => {
+    if (data.type === "chat.send") {
+      const conversationId = data.conversationId as string;
+
+      send(ws, {
+        type: "chat.delta",
+        conversationId,
+        steps: [
+          {
+            id: "ws-usage-assistant",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Response with usage stats.",
+            createdAt: new Date().toISOString(),
+            expanded: true,
+          },
+        ],
+      });
+
+      send(ws, {
+        type: "chat.done",
+        conversationId,
+        steps: [
+          {
+            id: "ws-usage-assistant",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Response with usage stats.",
+            createdAt: new Date().toISOString(),
+            expanded: true,
+            usage: {
+              inputTokens: 42,
+              outputTokens: 128,
+              stopReason: "stop",
+            },
+          },
+        ],
+      });
+    }
+  };
+
+  await page.goto("/");
+  await closeToolsDrawer(page);
+  await waitForWsConnection();
+
+  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Show me usage");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Response with usage stats.")).toBeVisible();
+
+  // The secondary text should display token counts and stop reason
+  const assistantStep = page.locator('[data-step-kind="assistant"]');
+  await expect(assistantStep.getByText("in: 42")).toBeVisible();
+  await expect(assistantStep.getByText("out: 128")).toBeVisible();
+  await expect(assistantStep.getByText("stop: stop")).toBeVisible();
+});
+
+test("displays partial usage data when only some fields are present", async ({ page }) => {
+  wsHandler = (data, ws) => {
+    if (data.type === "chat.send") {
+      const conversationId = data.conversationId as string;
+
+      send(ws, {
+        type: "chat.done",
+        conversationId,
+        steps: [
+          {
+            id: "ws-partial-usage",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Only output tokens.",
+            createdAt: new Date().toISOString(),
+            expanded: true,
+            usage: {
+              outputTokens: 55,
+            },
+          },
+        ],
+      });
+    }
+  };
+
+  await page.goto("/");
+  await closeToolsDrawer(page);
+  await waitForWsConnection();
+
+  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Partial usage");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Only output tokens.")).toBeVisible();
+
+  const assistantStep = page.locator('[data-step-kind="assistant"]');
+  await expect(assistantStep.getByText("out: 55")).toBeVisible();
+  // Should not show "in:" since inputTokens was not provided
+  await expect(assistantStep.getByText(/in:/)).toHaveCount(0);
+});
+
+test("persists usage data across page reload", async ({ page }) => {
+  wsHandler = (data, ws) => {
+    if (data.type === "chat.send") {
+      const conversationId = data.conversationId as string;
+
+      send(ws, {
+        type: "chat.done",
+        conversationId,
+        steps: [
+          {
+            id: "ws-persist-usage",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Persisted usage response.",
+            createdAt: new Date().toISOString(),
+            expanded: true,
+            usage: {
+              inputTokens: 100,
+              outputTokens: 200,
+              stopReason: "length",
+            },
+          },
+        ],
+      });
+    }
+  };
+
+  await page.goto("/");
+  await closeToolsDrawer(page);
+  await waitForWsConnection();
+
+  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Persist usage test");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Persisted usage response.")).toBeVisible();
+
+  // Wait for localStorage persistence
+  await page.waitForFunction(() => {
+    const raw = window.localStorage.getItem("ollamable.conversations");
+    return raw?.includes('"inputTokens":100');
+  });
+
+  await page.reload();
+  await closeToolsDrawer(page);
+
+  // Usage data should survive the reload
+  const assistantStep = page.locator('[data-step-kind="assistant"]');
+  await expect(assistantStep.getByText("in: 100")).toBeVisible();
+  await expect(assistantStep.getByText("out: 200")).toBeVisible();
+  await expect(assistantStep.getByText("stop: length")).toBeVisible();
+});
