@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
@@ -9,6 +10,27 @@ import { WebSearchExecutor } from "./tools/web-search.js";
 import { loadProviderConfigs } from "./provider-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, "..");
+
+// Load .env / .envrc so the backend picks up the same env vars as Next.js.
+for (const envFile of [".env", ".envrc"]) {
+  try {
+    const raw = readFileSync(resolve(PROJECT_ROOT, envFile), "utf-8");
+    for (const line of raw.split("\n")) {
+      const trimmed = line.replace(/^export\s+/, "").trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx < 1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // File not found — skip
+  }
+}
 const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
 const MCP_CONFIG = process.env.MCP_CONFIG ?? resolve(__dirname, "mcp-config.json");
 
