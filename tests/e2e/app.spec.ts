@@ -186,7 +186,7 @@ test("supports model selection from the mocked Ollama tag list", async ({ page }
   await page.goto("/");
   await closeToolsDrawer(page);
 
-  await page.getByRole("combobox").click();
+  await page.getByRole("combobox", { name: "Model" }).click();
   await expect(
     page.getByRole("option", { name: "nomic-embed-text:latest" })
   ).toHaveCount(0);
