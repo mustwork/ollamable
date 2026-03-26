@@ -79,6 +79,7 @@ export class ConnectionHandler {
     }
 
     if (msg.type === "chat.stop") {
+      console.log(`[ws] <- chat.stop  conversation=${msg.conversationId}`);
       const controller = this.abortControllers.get(msg.conversationId);
       if (controller) {
         controller.abort();
@@ -88,6 +89,10 @@ export class ConnectionHandler {
     }
 
     if (msg.type === "chat.send") {
+      const toolNames = (msg.tools ?? []).map((t) => t.name).join(", ");
+      console.log(
+        `[ws] <- chat.send  conversation=${msg.conversationId}  model=${msg.model}  steps=${msg.steps.length}  tools=[${toolNames}]`
+      );
       await this.handleChatSend(msg);
     }
   }

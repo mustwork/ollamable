@@ -2,18 +2,27 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeRegistry } from "@/src/components/theme-registry";
 import { ChatWorkspace } from "@/src/components/chat-workspace";
-import { fetchModelMeta, streamAssistantResponse } from "@/src/lib/ollama";
+import { fetchModelMeta } from "@/src/lib/ollama";
 import { SELECTED_KEY, STORAGE_KEY } from "@/src/lib/chat";
 
+const { mockSend, mockStartStream, mockCancelAll } = vi.hoisted(() => ({
+  mockSend: vi.fn(),
+  mockStartStream: vi.fn(),
+  mockCancelAll: vi.fn(),
+}));
+
 vi.mock("@/src/lib/use-websocket", () => ({
-  useWebSocket: () => ({ send: vi.fn(), connected: false, lastMessage: null }),
+  useWebSocket: (_url: string, onMessage: (data: unknown) => void) => {
+    (globalThis as Record<string, unknown>).__wsMockOnMessage = onMessage;
+    return { send: mockSend, connected: true, lastMessage: null };
+  },
 }));
 
 vi.mock("@/src/lib/backend-client", () => ({
   BackendClient: vi.fn().mockImplementation(() => ({
     handleServerMessage: vi.fn(),
-    startStream: vi.fn(),
-    cancelAll: vi.fn(),
+    startStream: mockStartStream,
+    cancelAll: mockCancelAll,
   })),
   WS_URL: "ws://localhost:3001",
 }));
@@ -50,35 +59,35 @@ vi.mock("@/src/lib/ollama", async (importOriginal) => {
         "general.architecture": "qwen3",
       },
     }),
-    streamAssistantResponse: vi.fn().mockResolvedValue([
-      {
-        id: "assistant-1",
-        kind: "assistant",
-        title: "Assistant",
-        content: "Streamed answer",
-        createdAt: new Date().toISOString(),
-        expanded: true,
-      },
-    ]),
   };
 });
 
-const mockedStreamAssistantResponse = vi.mocked(streamAssistantResponse);
 const mockedFetchModelMeta = vi.mocked(fetchModelMeta);
+
+const defaultResponseSteps = [
+  {
+    id: "assistant-1",
+    kind: "assistant" as const,
+    title: "Assistant",
+    content: "Streamed answer",
+    createdAt: new Date().toISOString(),
+    expanded: true,
+  },
+];
+
+function setupStartStream(steps = defaultResponseSteps) {
+  mockStartStream.mockReturnValue({
+    promise: Promise.resolve(steps),
+    stop: vi.fn(),
+  });
+}
+
 describe("ChatWorkspace", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    mockedStreamAssistantResponse.mockClear();
-    mockedStreamAssistantResponse.mockResolvedValue([
-      {
-        id: "assistant-1",
-        kind: "assistant",
-        title: "Assistant",
-        content: "Streamed answer",
-        createdAt: new Date().toISOString(),
-        expanded: true,
-      },
-    ]);
+    mockStartStream.mockClear();
+    mockSend.mockClear();
+    setupStartStream();
     mockedFetchModelMeta.mockClear();
     Object.defineProperty(window.navigator, "clipboard", {
       configurable: true,
@@ -296,16 +305,15 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText("Later prompt")).not.toBeInTheDocument();
     expect(screen.getAllByText("Edited prompt")).not.toHaveLength(0);
     expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
-    expect(mockedStreamAssistantResponse).toHaveBeenCalledWith(
+    expect(mockStartStream).toHaveBeenCalledWith(
+      expect.any(Function),
       expect.objectContaining({
-        conversation: expect.objectContaining({
-          steps: expect.arrayContaining([
-            expect.objectContaining({
-              kind: "user",
-              content: "Edited prompt",
-            }),
-          ]),
-        }),
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "user",
+            content: "Edited prompt",
+          }),
+        ]),
       })
     );
 
@@ -391,19 +399,18 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText("Prior reasoning")).not.toBeInTheDocument();
     expect(screen.queryByText("Later prompt")).not.toBeInTheDocument();
     expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
-    expect(mockedStreamAssistantResponse).toHaveBeenCalledWith(
+    expect(mockStartStream).toHaveBeenCalledWith(
+      expect.any(Function),
       expect.objectContaining({
-        conversation: expect.objectContaining({
-          steps: [
-            expect.objectContaining({
-              kind: "system",
-            }),
-            expect.objectContaining({
-              kind: "user",
-              content: "Original prompt",
-            }),
-          ],
-        }),
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "system",
+          }),
+          expect.objectContaining({
+            kind: "user",
+            content: "Original prompt",
+          }),
+        ]),
       })
     );
 
@@ -417,15 +424,14 @@ describe("ChatWorkspace", () => {
 
   it("shows a spinner and disables send while waiting for a response", async () => {
     const user = userEvent.setup();
-    let resolveStream: ((value: Awaited<ReturnType<typeof streamAssistantResponse>>) => void) | null =
-      null;
+    let resolveStream: ((value: unknown[]) => void) | null = null;
 
-    mockedStreamAssistantResponse.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveStream = resolve;
-        })
-    );
+    mockStartStream.mockReturnValueOnce({
+      promise: new Promise((resolve) => {
+        resolveStream = resolve;
+      }),
+      stop: vi.fn(),
+    });
 
     renderWorkspace();
 
@@ -456,38 +462,38 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
-    mockedStreamAssistantResponse.mockImplementationOnce(async ({ onDelta }) => {
-      onDelta?.([
-        {
-          id: "assistant-1",
-          kind: "assistant",
-          title: "Assistant",
-          content: "Partial",
-          createdAt: new Date().toISOString(),
-          expanded: true,
-        },
-      ]);
-      onDelta?.([
-        {
-          id: "assistant-1",
-          kind: "assistant",
-          title: "Assistant",
-          content: "Partial with more text",
-          createdAt: new Date().toISOString(),
-          expanded: true,
-        },
-      ]);
 
-      return [
-        {
-          id: "assistant-1",
-          kind: "assistant",
-          title: "Assistant",
-          content: "Streamed answer",
-          createdAt: new Date().toISOString(),
-          expanded: true,
-        },
-      ];
+    let resolveStream: ((steps: unknown[]) => void) | null = null;
+
+    mockStartStream.mockImplementationOnce((_send: unknown, request: { onDelta: (steps: unknown[]) => void }) => {
+      // Fire deltas immediately so the component renders streaming steps
+      queueMicrotask(() => {
+        request.onDelta([
+          {
+            id: "assistant-1",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Partial",
+            createdAt: new Date().toISOString(),
+            expanded: true,
+          },
+        ]);
+        request.onDelta([
+          {
+            id: "assistant-1",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Partial with more text",
+            createdAt: new Date().toISOString(),
+            expanded: true,
+          },
+        ]);
+      });
+
+      const promise = new Promise<unknown[]>((resolve) => {
+        resolveStream = resolve;
+      });
+      return { promise, stop: vi.fn() };
     });
 
     renderWorkspace();
@@ -500,6 +506,18 @@ describe("ChatWorkspace", () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledTimes(1);
     });
+
+    // Resolve stream so the test completes cleanly
+    resolveStream?.([
+      {
+        id: "assistant-1",
+        kind: "assistant",
+        title: "Assistant",
+        content: "Streamed answer",
+        createdAt: new Date().toISOString(),
+        expanded: true,
+      },
+    ]);
   });
 
   it("deletes conversations and removes them from persisted storage", async () => {
@@ -588,7 +606,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 
-  it("sends only active tools to Ollama", async () => {
+  it("sends only active tools to the backend", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
@@ -603,7 +621,8 @@ describe("ChatWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(mockedStreamAssistantResponse).toHaveBeenCalledWith(
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.any(Function),
         expect.objectContaining({
           tools: [
             expect.objectContaining({
@@ -768,17 +787,16 @@ describe("ChatWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Submit result" }));
 
     await waitFor(() => {
-      expect(mockedStreamAssistantResponse).toHaveBeenCalledWith(
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.any(Function),
         expect.objectContaining({
-          conversation: expect.objectContaining({
-            steps: expect.arrayContaining([
-              expect.objectContaining({
-                kind: "tool_result",
-                content: "Search summary",
-                toolResult: { name: "web_search" },
-              }),
-            ]),
-          }),
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "tool_result",
+              content: "Search summary",
+              toolResult: { name: "web_search" },
+            }),
+          ]),
         })
       );
     });

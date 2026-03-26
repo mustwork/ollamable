@@ -25,6 +25,6 @@ test-unit: ## Run unit tests
 test-e2e: ## Run end-to-end tests
 	npm run test:e2e
 
-dev: ## Clean and start dev server
+dev: ## Clean and start frontend + backend dev servers
 	$(MAKE) clean
 	npm run dev:auto

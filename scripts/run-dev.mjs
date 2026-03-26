@@ -59,7 +59,15 @@ const url = `http://127.0.0.1:${port}`;
 console.log(`Starting dev server on ${url}`);
 openBrowser(url);
 
-const server = spawn(
+const children = [];
+
+const backend = spawn(npmCommand, ["run", "dev:server"], {
+  stdio: "inherit",
+  env: { ...process.env },
+});
+children.push(backend);
+
+const frontend = spawn(
   npmCommand,
   ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", port],
   {
@@ -67,12 +75,19 @@ const server = spawn(
     env: { ...process.env },
   }
 );
+children.push(frontend);
 
-server.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
+function shutdown(codeOrSignal) {
+  for (const child of children) {
+    child.kill();
   }
 
-  process.exit(code ?? 0);
-});
+  if (typeof codeOrSignal === "string") {
+    process.kill(process.pid, codeOrSignal);
+  } else {
+    process.exit(codeOrSignal ?? 0);
+  }
+}
+
+frontend.on("exit", (code, signal) => shutdown(signal ?? code));
+backend.on("exit", (code, signal) => shutdown(signal ?? code));
