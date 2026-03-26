@@ -746,17 +746,8 @@ export function ChatWorkspace() {
         name: pendingToolCall.toolCall?.name ?? "tool",
       }
     );
-    const nextConversation = {
-      ...selectedConversation,
-      steps: [...selectedConversation.steps, toolResultStep],
-    };
 
     setComposerValue("");
-    setError("");
-    setStreaming(true);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
 
     updateConversation(selectedConversation.id, (conversation) => ({
       ...conversation,
@@ -764,53 +755,13 @@ export function ChatWorkspace() {
       updatedAt: new Date().toISOString(),
     }));
 
-    try {
-      const responseSteps = await streamAssistantResponse({
-        conversation: nextConversation,
-        tools: activeTools,
-        signal: controller.signal,
-        onDelta: (partialSteps) => {
-          updateConversation(selectedConversation.id, (conversation) => {
-            const stableSteps = conversation.steps.filter((step) => !step.id.startsWith("stream-"));
-            const nextStreamingSteps = partialSteps.map((step) => ({
-              ...step,
-              id: `stream-${step.id}`,
-              expanded: true,
-            }));
+    const nextConversation = {
+      ...selectedConversation,
+      steps: [...selectedConversation.steps, toolResultStep],
+    };
 
-            return {
-              ...conversation,
-              steps: [...stableSteps, ...nextStreamingSteps],
-              updatedAt: new Date().toISOString(),
-            };
-          });
-        },
-      });
-
-      updateConversation(selectedConversation.id, (conversation) => ({
-        ...conversation,
-        steps: [
-          ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-          ...responseSteps,
-        ],
-        updatedAt: new Date().toISOString(),
-      }));
-    } catch (streamError) {
-      const message =
-        streamError instanceof Error && streamError.name === "AbortError"
-          ? "Generation stopped."
-          : "Failed to stream from Ollama. Check that the local server is running.";
-
-      setError(message);
-      updateConversation(selectedConversation.id, (conversation) => ({
-        ...conversation,
-        steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-        updatedAt: new Date().toISOString(),
-      }));
-    } finally {
-      abortRef.current = null;
-      setStreaming(false);
-    }
+    // Reuse streamConversationResponse so the WebSocket/fallback logic is consistent
+    await streamConversationResponse(nextConversation);
   }
 
   function handleStop() {

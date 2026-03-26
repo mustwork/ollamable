@@ -44,6 +44,7 @@ export class ConnectionHandler {
         controller.abort();
       }
       this.abortControllers.clear();
+      void this.mcpBridge.disconnect();
     });
   }
 
@@ -98,8 +99,10 @@ export class ConnectionHandler {
     const controller = new AbortController();
     this.abortControllers.set(conversationId, controller);
 
-    // Mutable copy of steps that we extend through the tool loop
+    // Mutable copy of steps that we extend through the tool loop.
+    // `originalCount` marks the boundary so chat.done sends only new steps.
     let steps = [...msg.steps];
+    const originalCount = steps.length;
 
     try {
       // Tool loop: keep calling Ollama until we get a response with no tool calls
@@ -134,11 +137,13 @@ export class ConnectionHandler {
         );
 
         if (executableToolCalls.length === 0) {
-          // No executable tool calls — we're done
+          // No executable tool calls — we're done.
+          // Send ALL new steps accumulated during the loop, not just the final response.
+          const allNewSteps = [...steps.slice(originalCount), ...responseSteps];
           this.send({
             type: "chat.done",
             conversationId,
-            steps: responseSteps,
+            steps: allNewSteps,
           });
           break;
         }
