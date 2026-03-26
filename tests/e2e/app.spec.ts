@@ -1,4 +1,72 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
+
+// ── Configurable WebSocket chat handler ─────────────────────────────
+
+type WsChatHandler = (
+  message: Record<string, unknown>,
+  ws: WebSocketRoute
+) => void;
+
+let wsChatHandler: WsChatHandler;
+
+/**
+ * Build a WsChatHandler that replies with fixed reasoning + assistant steps.
+ * The content mirrors what the original Ollama HTTP mock produced.
+ */
+function makeMockWsHandler(
+  reasoning: string,
+  assistantContent: string
+): WsChatHandler {
+  return (message, ws) => {
+    if (message.type !== "chat.send") return;
+    const conversationId = message.conversationId as string;
+    const now = new Date().toISOString();
+
+    const reasoningStep = {
+      id: "mock-reasoning-1",
+      kind: "reasoning",
+      title: "Reasoning",
+      content: reasoning,
+      createdAt: now,
+      expanded: true,
+    };
+    const assistantStep = {
+      id: "mock-assistant-1",
+      kind: "assistant",
+      title: "Assistant",
+      content: assistantContent,
+      createdAt: now,
+      expanded: true,
+    };
+
+    ws.send(
+      JSON.stringify({
+        type: "chat.delta",
+        conversationId,
+        steps: [reasoningStep],
+      })
+    );
+    ws.send(
+      JSON.stringify({
+        type: "chat.delta",
+        conversationId,
+        steps: [reasoningStep, assistantStep],
+      })
+    );
+    ws.send(
+      JSON.stringify({
+        type: "chat.done",
+        conversationId,
+        steps: [reasoningStep, assistantStep],
+      })
+    );
+  };
+}
+
+const defaultWsChatHandler = makeMockWsHandler(
+  "I should show my reasoning as a separate step.",
+  "This is a streamed answer from the mocked Ollama endpoint. It includes final assistant text."
+);
 
 const mockModels = {
   models: [
@@ -38,37 +106,6 @@ const mockModels = {
   ],
 };
 
-const streamedChatBody = [
-  JSON.stringify({
-    message: {
-      thinking: "I should show my reasoning as a separate step.",
-      tool_calls: [
-        {
-          function: {
-            name: "web_search",
-            arguments: {
-              query: "best local ollama ui patterns",
-            },
-          },
-        },
-      ],
-    },
-    done: false,
-  }),
-  JSON.stringify({
-    message: {
-      content: "This is a streamed answer from the mocked Ollama endpoint.",
-    },
-    done: false,
-  }),
-  JSON.stringify({
-    message: {
-      content: " It includes final assistant text.",
-    },
-    done: true,
-  }),
-].join("\n");
-
 async function closeToolsDrawer(page: Page) {
   const heading = page.getByRole("heading", { name: "Conversation tools" });
   if (await heading.isVisible()) {
@@ -101,6 +138,8 @@ async function seedConversationState(
 }
 
 test.beforeEach(async ({ page }) => {
+  wsChatHandler = defaultWsChatHandler;
+
   await page.addInitScript(() => {
     if (!window.sessionStorage.getItem("ollamable.e2e.init")) {
       window.localStorage.clear();
@@ -116,11 +155,19 @@ test.beforeEach(async ({ page }) => {
     });
   });
 
-  await page.route("http://localhost:11434/api/chat", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/x-ndjson",
-      body: streamedChatBody,
+  // Intercept WebSocket so the frontend sees wsConnected === true.
+  await page.routeWebSocket("ws://localhost:3001", (ws) => {
+    ws.onMessage((raw) => {
+      try {
+        const data = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (data.type === "ping") {
+          ws.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+        wsChatHandler(data, ws);
+      } catch {
+        // ignore malformed
+      }
     });
   });
 });
@@ -430,49 +477,17 @@ test("regenerates an assistant response and replaces the later conversation tail
 test("regenerates a newly created assistant response and replaces it with a fresh response", async ({
   page,
 }) => {
-  const responses = [
-    [
-      JSON.stringify({
-        message: {
-          thinking: "First reasoning trace.",
-        },
-        done: false,
-      }),
-      JSON.stringify({
-        message: {
-          content: "First generated answer.",
-        },
-        done: true,
-      }),
-    ].join("\n"),
-    [
-      JSON.stringify({
-        message: {
-          thinking: "Second reasoning trace.",
-        },
-        done: false,
-      }),
-      JSON.stringify({
-        message: {
-          content: "Second generated answer.",
-        },
-        done: true,
-      }),
-    ].join("\n"),
+  const handlers = [
+    makeMockWsHandler("First reasoning trace.", "First generated answer."),
+    makeMockWsHandler("Second reasoning trace.", "Second generated answer."),
   ];
   let chatCallCount = 0;
 
-  await page.unroute("http://localhost:11434/api/chat");
-  await page.route("http://localhost:11434/api/chat", async (route) => {
-    const body = responses[Math.min(chatCallCount, responses.length - 1)];
+  wsChatHandler = (message, ws) => {
+    const handler = handlers[Math.min(chatCallCount, handlers.length - 1)];
     chatCallCount += 1;
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/x-ndjson",
-      body,
-    });
-  });
+    handler(message, ws);
+  };
 
   await page.goto("/");
   await closeToolsDrawer(page);
