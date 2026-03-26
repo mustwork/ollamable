@@ -1878,9 +1878,6 @@ function getMetaEventIcon(kind?: string) {
     case "search_start":
     case "search_result":
       return <SearchIcon fontSize="small" />;
-    case "context_start":
-    case "context_done":
-      return <MemoryIcon fontSize="small" />;
     default:
       return <CloudIcon fontSize="small" />;
   }

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { ToolDispatcher } from "./tool-executor.js";
 import { WebSearchExecutor } from "./tools/web-search.js";
 import { McpBridge } from "./tools/mcp-bridge.js";
-import { ContextPrepExecutor } from "./tools/context-prep.js";
 import { LlmRouter } from "./llm-router.js";
 import { loadProviderConfigs } from "./provider-config.js";
 import type {
@@ -38,7 +37,6 @@ export class ConnectionHandler {
       this.dispatcher.register(new WebSearchExecutor());
     }
     this.dispatcher.register(this.mcpBridge);
-    this.dispatcher.register(new ContextPrepExecutor());
 
     ws.on("message", (data) => {
       void this.handleMessage(data.toString());

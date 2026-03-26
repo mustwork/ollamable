@@ -25,6 +25,9 @@ vi.mock("../../server/ollama-client.js", () => ({
   buildOllamaChatBody: vi.fn(),
 }));
 
+// Set BRAVE_API_KEY so WebSearchExecutor registers in the ConnectionHandler
+vi.stubEnv("BRAVE_API_KEY", "test-brave-key");
+
 import { ConnectionHandler } from "../../server/ws-handler.js";
 import { streamOllamaResponse } from "../../server/ollama-client.js";
 import type { ConversationStep } from "../../server/types.js";
@@ -57,6 +60,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   mockStreamOllama.mockReset();
+  vi.restoreAllMocks();
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -162,6 +166,24 @@ function makeChatSend(overrides?: Record<string, unknown>) {
     tools: [],
     ...overrides,
   };
+}
+
+/** Mock global fetch to return a Brave Search API response. */
+function mockBraveSearchFetch() {
+  const braveResponse = {
+    web: {
+      results: [
+        { title: "Example Result", url: "https://example.com", description: "A test result" },
+      ],
+    },
+  };
+
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(braveResponse), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  );
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -271,18 +293,19 @@ describe("ConnectionHandler", () => {
   // ── Tool loop ────────────────────────────────────────────────────
 
   it("executes the tool loop when Ollama returns tool calls", async () => {
+    mockBraveSearchFetch();
     let ollamaCallCount = 0;
 
-    // First call: Ollama returns a tool_call for context_prepare
+    // First call: Ollama returns a tool_call for web_search
     // Second call: Ollama returns a plain assistant response
     mockStreamOllama.mockImplementation(async (args) => {
       ollamaCallCount++;
 
       if (ollamaCallCount === 1) {
-        const toolCallStep = makeStep("tool_call", "Requested context_prepare", {
+        const toolCallStep = makeStep("tool_call", "Requested web_search", {
           toolCall: {
-            name: "context_prepare",
-            arguments: { skill: "test-skill" },
+            name: "web_search",
+            arguments: { query: "test query" },
           },
         });
         args.onDelta([toolCallStep]);
@@ -291,7 +314,7 @@ describe("ConnectionHandler", () => {
 
       const assistantStep = makeStep(
         "assistant",
-        "Based on the context, here is the answer."
+        "Based on the search results, here is the answer."
       );
       args.onDelta([assistantStep]);
       return [assistantStep];
@@ -320,13 +343,13 @@ describe("ConnectionHandler", () => {
       );
       expect(dispatchEvent).toBeDefined();
 
-      // ContextPrepExecutor emits context_start and context_done meta events
-      const contextEvents = metaEvents.filter(
+      // WebSearchExecutor emits search_start and search_result meta events
+      const searchEvents = metaEvents.filter(
         (m) =>
-          (m.event as Record<string, unknown>)?.kind === "context_start" ||
-          (m.event as Record<string, unknown>)?.kind === "context_done"
+          (m.event as Record<string, unknown>)?.kind === "search_start" ||
+          (m.event as Record<string, unknown>)?.kind === "search_result"
       );
-      expect(contextEvents.length).toBe(2);
+      expect(searchEvents.length).toBe(2);
 
       // Final chat.done should include tool_call + tool_result + assistant steps
       const done = messages.find((m) => m.type === "chat.done");
@@ -337,15 +360,16 @@ describe("ConnectionHandler", () => {
       expect(stepKinds).toContain("tool_result");
       expect(stepKinds).toContain("assistant");
 
-      // Tool result should contain context_prepare output
+      // Tool result should contain search output
       const toolResult = done!.steps!.find((s) => s.kind === "tool_result");
-      expect(toolResult?.content).toContain("Context loaded for skill: test-skill");
+      expect(toolResult?.content).toContain("Example Result");
     } finally {
       ws.close();
     }
   });
 
   it("passes tool_call and tool_result steps back to Ollama on the second call", async () => {
+    mockBraveSearchFetch();
     let secondCallSteps: ConversationStep[] = [];
     let ollamaCallCount = 0;
 
@@ -353,10 +377,10 @@ describe("ConnectionHandler", () => {
       ollamaCallCount++;
 
       if (ollamaCallCount === 1) {
-        const toolCallStep = makeStep("tool_call", "Requested context_prepare", {
+        const toolCallStep = makeStep("tool_call", "Requested web_search", {
           toolCall: {
-            name: "context_prepare",
-            arguments: { skill: "verify-steps" },
+            name: "web_search",
+            arguments: { query: "verify-steps" },
           },
         });
         args.onDelta([toolCallStep]);

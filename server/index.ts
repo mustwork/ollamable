@@ -6,7 +6,6 @@ import { ConnectionHandler } from "./ws-handler.js";
 import { LlmRouter } from "./llm-router.js";
 import { ToolDispatcher } from "./tool-executor.js";
 import { WebSearchExecutor } from "./tools/web-search.js";
-import { ContextPrepExecutor } from "./tools/context-prep.js";
 import { loadProviderConfigs } from "./provider-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -22,7 +21,6 @@ const staticDispatcher = new ToolDispatcher();
 if (WebSearchExecutor.isAvailable()) {
   staticDispatcher.register(new WebSearchExecutor());
 }
-staticDispatcher.register(new ContextPrepExecutor());
 
 console.log(
   `[server] Providers: ${providerConfigs.map((p) => p.name).join(", ")}`
