@@ -18,9 +18,7 @@ const router = new LlmRouter(providerConfigs);
 // Static tool registry — used by the /tools HTTP endpoint.
 // MCP tools are per-connection and delivered via WebSocket tools.update instead.
 const staticDispatcher = new ToolDispatcher();
-if (WebSearchExecutor.isAvailable()) {
-  staticDispatcher.register(new WebSearchExecutor());
-}
+staticDispatcher.register(new WebSearchExecutor());
 
 console.log(
   `[server] Providers: ${providerConfigs.map((p) => p.name).join(", ")}`

@@ -9,8 +9,8 @@ export class WebSearchExecutor implements ToolExecutor {
     this.apiKey = process.env.BRAVE_API_KEY ?? "";
   }
 
-  static isAvailable(): boolean {
-    return Boolean(process.env.BRAVE_API_KEY);
+  isConfigured(): boolean {
+    return Boolean(this.apiKey);
   }
 
   getToolDefinitions(): ToolDefinition[] {
@@ -56,6 +56,20 @@ export class WebSearchExecutor implements ToolExecutor {
       data: { query },
       timestamp: new Date().toISOString(),
     });
+
+    if (!this.isConfigured()) {
+      const message = "BRAVE_API_KEY is not set. Configure it in the server environment to enable web search.";
+      emit({
+        id: randomUUID(),
+        kind: "search_result",
+        title: "Search Not Configured",
+        detail: message,
+        data: { error: message, query },
+        timestamp: new Date().toISOString(),
+        durationMs: 0,
+      });
+      return JSON.stringify({ query, error: message });
+    }
 
     try {
       const params = new URLSearchParams({ q: query, count: String(count) });

@@ -33,9 +33,7 @@ export class ConnectionHandler {
     this.dispatcher = new ToolDispatcher();
     this.mcpBridge = new McpBridge();
 
-    if (WebSearchExecutor.isAvailable()) {
-      this.dispatcher.register(new WebSearchExecutor());
-    }
+    this.dispatcher.register(new WebSearchExecutor());
     this.dispatcher.register(this.mcpBridge);
 
     ws.on("message", (data) => {

@@ -25,9 +25,6 @@ vi.mock("../../server/ollama-client.js", () => ({
   buildOllamaChatBody: vi.fn(),
 }));
 
-// Set BRAVE_API_KEY so WebSearchExecutor registers in the ConnectionHandler
-vi.stubEnv("BRAVE_API_KEY", "test-brave-key");
-
 import { ConnectionHandler } from "../../server/ws-handler.js";
 import { streamOllamaResponse } from "../../server/ollama-client.js";
 import type { ConversationStep } from "../../server/types.js";
@@ -61,6 +58,7 @@ afterAll(async () => {
 beforeEach(() => {
   mockStreamOllama.mockReset();
   vi.restoreAllMocks();
+  delete process.env.BRAVE_API_KEY;
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -168,8 +166,16 @@ function makeChatSend(overrides?: Record<string, unknown>) {
   };
 }
 
-/** Mock global fetch to return a Brave Search API response. */
+/**
+ * Mock global fetch to return a Brave Search API response.
+ * Also sets BRAVE_API_KEY so the executor treats itself as configured.
+ * Note: the env var must be set before the ConnectionHandler is created
+ * (i.e. before `connectClient()`), because the WebSearchExecutor reads
+ * it in its constructor.
+ */
 function mockBraveSearchFetch() {
+  process.env.BRAVE_API_KEY = "test-brave-key";
+
   const braveResponse = {
     web: {
       results: [
