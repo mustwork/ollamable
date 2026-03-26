@@ -1,0 +1,543 @@
+/**
+ * Integration tests for the WebSocket backend handler.
+ *
+ * These tests start a real WebSocket server with a ConnectionHandler,
+ * connect a `ws` client, and verify the server's message protocol:
+ *   - ping / pong keep-alive
+ *   - chat.send → chat.delta / chat.done streaming
+ *   - tool loop (tool_call → execute → re-call Ollama)
+ *   - meta.event emission during tool execution
+ *   - chat.stop abort flow
+ *   - chat.error propagation
+ *
+ * The Ollama HTTP client (`streamOllamaResponse`) is mocked so these
+ * tests exercise the handler logic without needing a running Ollama.
+ */
+
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { createServer, type Server } from "node:http";
+import { WebSocketServer, WebSocket } from "ws";
+
+// ── Mock Ollama client before importing the handler ──────────────────
+
+vi.mock("../../server/ollama-client.js", () => ({
+  streamOllamaResponse: vi.fn(),
+  buildOllamaChatBody: vi.fn(),
+}));
+
+import { ConnectionHandler } from "../../server/ws-handler.js";
+import { streamOllamaResponse } from "../../server/ollama-client.js";
+import type { ConversationStep } from "../../server/types.js";
+
+const mockStreamOllama = vi.mocked(streamOllamaResponse);
+
+// ── Server lifecycle ─────────────────────────────────────────────────
+
+let httpServer: Server;
+let wss: WebSocketServer;
+let wsPort: number;
+
+beforeAll(async () => {
+  httpServer = createServer();
+  wss = new WebSocketServer({ server: httpServer });
+  wss.on("connection", (ws) => {
+    // Create a handler but skip MCP init (no external servers needed)
+    new ConnectionHandler(ws);
+  });
+
+  await new Promise<void>((resolve) => httpServer.listen(0, resolve));
+  const address = httpServer.address();
+  wsPort = typeof address === "object" && address ? address.port : 0;
+});
+
+afterAll(async () => {
+  wss.close();
+  await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+});
+
+beforeEach(() => {
+  mockStreamOllama.mockReset();
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function connectClient(): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${wsPort}`);
+    ws.on("open", () => resolve(ws));
+    ws.on("error", reject);
+  });
+}
+
+function sendJson(ws: WebSocket, data: unknown) {
+  ws.send(JSON.stringify(data));
+}
+
+interface ParsedMessage {
+  type?: string;
+  conversationId?: string;
+  steps?: ConversationStep[];
+  message?: string;
+  event?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+function waitForMessage(
+  ws: WebSocket,
+  predicate: (msg: ParsedMessage) => boolean,
+  timeoutMs = 5_000
+): Promise<ParsedMessage> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("waitForMessage timeout")),
+      timeoutMs
+    );
+
+    function onMessage(raw: Buffer | ArrayBuffer | Buffer[]) {
+      const msg = JSON.parse(raw.toString()) as ParsedMessage;
+      if (predicate(msg)) {
+        clearTimeout(timer);
+        ws.off("message", onMessage);
+        resolve(msg);
+      }
+    }
+
+    ws.on("message", onMessage);
+  });
+}
+
+function collectMessages(
+  ws: WebSocket,
+  predicate: (msgs: ParsedMessage[]) => boolean,
+  timeoutMs = 5_000
+): Promise<ParsedMessage[]> {
+  return new Promise((resolve, reject) => {
+    const msgs: ParsedMessage[] = [];
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `collectMessages timeout — received ${msgs.length}: [${msgs.map((m) => m.type).join(", ")}]`
+          )
+        ),
+      timeoutMs
+    );
+
+    function onMessage(raw: Buffer | ArrayBuffer | Buffer[]) {
+      const msg = JSON.parse(raw.toString()) as ParsedMessage;
+      msgs.push(msg);
+      if (predicate(msgs)) {
+        clearTimeout(timer);
+        ws.off("message", onMessage);
+        resolve(msgs);
+      }
+    }
+
+    ws.on("message", onMessage);
+  });
+}
+
+function makeStep(
+  kind: ConversationStep["kind"],
+  content: string,
+  extra?: Partial<ConversationStep>
+): ConversationStep {
+  return {
+    id: `test-${kind}-${Date.now()}`,
+    kind,
+    title: kind.charAt(0).toUpperCase() + kind.slice(1),
+    content,
+    createdAt: new Date().toISOString(),
+    expanded: true,
+    ...extra,
+  };
+}
+
+function makeChatSend(overrides?: Record<string, unknown>) {
+  return {
+    type: "chat.send",
+    conversationId: `conv-${Date.now()}`,
+    model: "qwen3:latest",
+    steps: [makeStep("system", ""), makeStep("user", "Hello")],
+    tools: [],
+    ...overrides,
+  };
+}
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+describe("ConnectionHandler", () => {
+  // ── Keep-alive ───────────────────────────────────────────────────
+
+  it("responds to ping with pong", async () => {
+    const ws = await connectClient();
+    try {
+      const pongPromise = waitForMessage(ws, (m) => m.type === "pong");
+      sendJson(ws, { type: "ping" });
+      const pong = await pongPromise;
+      expect(pong.type).toBe("pong");
+    } finally {
+      ws.close();
+    }
+  });
+
+  // ── Basic chat ───────────────────────────────────────────────────
+
+  it("streams a simple assistant response via chat.delta and chat.done", async () => {
+    const assistantStep = makeStep("assistant", "Hello from the server!");
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      args.onDelta([assistantStep]);
+      return [assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const messagesPromise = collectMessages(
+        ws,
+        (msgs) => msgs.some((m) => m.type === "chat.done")
+      );
+
+      sendJson(ws, makeChatSend());
+      const messages = await messagesPromise;
+
+      const deltas = messages.filter((m) => m.type === "chat.delta");
+      const done = messages.find((m) => m.type === "chat.done");
+
+      expect(deltas.length).toBeGreaterThanOrEqual(1);
+      expect(deltas[0].steps?.[0]?.content).toBe("Hello from the server!");
+
+      expect(done).toBeDefined();
+      expect(done!.steps).toHaveLength(1);
+      expect(done!.steps![0].kind).toBe("assistant");
+      expect(done!.steps![0].content).toBe("Hello from the server!");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("streams reasoning and assistant steps", async () => {
+    const reasoningStep = makeStep("reasoning", "Thinking about the question...");
+    const assistantStep = makeStep("assistant", "Here is my answer.");
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      args.onDelta([reasoningStep, assistantStep]);
+      return [reasoningStep, assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const donePromise = waitForMessage(ws, (m) => m.type === "chat.done");
+      sendJson(ws, makeChatSend());
+      const done = await donePromise;
+
+      expect(done.steps).toHaveLength(2);
+      expect(done.steps![0].kind).toBe("reasoning");
+      expect(done.steps![0].content).toBe("Thinking about the question...");
+      expect(done.steps![1].kind).toBe("assistant");
+      expect(done.steps![1].content).toBe("Here is my answer.");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("preserves conversationId in all response messages", async () => {
+    const conversationId = "conv-id-test-123";
+    const assistantStep = makeStep("assistant", "Ack.");
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      args.onDelta([assistantStep]);
+      return [assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const messagesPromise = collectMessages(
+        ws,
+        (msgs) => msgs.some((m) => m.type === "chat.done")
+      );
+
+      sendJson(ws, makeChatSend({ conversationId }));
+      const messages = await messagesPromise;
+
+      for (const msg of messages) {
+        expect(msg.conversationId).toBe(conversationId);
+      }
+    } finally {
+      ws.close();
+    }
+  });
+
+  // ── Tool loop ────────────────────────────────────────────────────
+
+  it("executes the tool loop when Ollama returns tool calls", async () => {
+    let ollamaCallCount = 0;
+
+    // First call: Ollama returns a tool_call for context_prepare
+    // Second call: Ollama returns a plain assistant response
+    mockStreamOllama.mockImplementation(async (args) => {
+      ollamaCallCount++;
+
+      if (ollamaCallCount === 1) {
+        const toolCallStep = makeStep("tool_call", "Requested context_prepare", {
+          toolCall: {
+            name: "context_prepare",
+            arguments: { skill: "test-skill" },
+          },
+        });
+        args.onDelta([toolCallStep]);
+        return [toolCallStep];
+      }
+
+      const assistantStep = makeStep(
+        "assistant",
+        "Based on the context, here is the answer."
+      );
+      args.onDelta([assistantStep]);
+      return [assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const messagesPromise = collectMessages(
+        ws,
+        (msgs) => msgs.some((m) => m.type === "chat.done")
+      );
+
+      sendJson(ws, makeChatSend());
+      const messages = await messagesPromise;
+
+      // Ollama should have been called twice (tool loop)
+      expect(ollamaCallCount).toBe(2);
+
+      // Meta events should have been emitted for tool dispatch
+      const metaEvents = messages.filter((m) => m.type === "meta.event");
+      expect(metaEvents.length).toBeGreaterThanOrEqual(1);
+
+      // At least one meta event should mention the tool dispatch
+      const dispatchEvent = metaEvents.find(
+        (m) => (m.event as Record<string, unknown>)?.kind === "mcp_call"
+      );
+      expect(dispatchEvent).toBeDefined();
+
+      // ContextPrepExecutor emits context_start and context_done meta events
+      const contextEvents = metaEvents.filter(
+        (m) =>
+          (m.event as Record<string, unknown>)?.kind === "context_start" ||
+          (m.event as Record<string, unknown>)?.kind === "context_done"
+      );
+      expect(contextEvents.length).toBe(2);
+
+      // Final chat.done should include tool_call + tool_result + assistant steps
+      const done = messages.find((m) => m.type === "chat.done");
+      expect(done).toBeDefined();
+
+      const stepKinds = done!.steps!.map((s) => s.kind);
+      expect(stepKinds).toContain("tool_call");
+      expect(stepKinds).toContain("tool_result");
+      expect(stepKinds).toContain("assistant");
+
+      // Tool result should contain context_prepare output
+      const toolResult = done!.steps!.find((s) => s.kind === "tool_result");
+      expect(toolResult?.content).toContain("Context loaded for skill: test-skill");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("passes tool_call and tool_result steps back to Ollama on the second call", async () => {
+    let secondCallSteps: ConversationStep[] = [];
+    let ollamaCallCount = 0;
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      ollamaCallCount++;
+
+      if (ollamaCallCount === 1) {
+        const toolCallStep = makeStep("tool_call", "Requested context_prepare", {
+          toolCall: {
+            name: "context_prepare",
+            arguments: { skill: "verify-steps" },
+          },
+        });
+        args.onDelta([toolCallStep]);
+        return [toolCallStep];
+      }
+
+      // Capture the steps passed to the second Ollama call
+      secondCallSteps = args.steps;
+
+      const assistantStep = makeStep("assistant", "Done.");
+      args.onDelta([assistantStep]);
+      return [assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const donePromise = waitForMessage(ws, (m) => m.type === "chat.done");
+      sendJson(ws, makeChatSend());
+      await donePromise;
+
+      // The second call should include original steps + tool_call + tool_result
+      const kinds = secondCallSteps.map((s) => s.kind);
+      expect(kinds).toContain("system");
+      expect(kinds).toContain("user");
+      expect(kinds).toContain("tool_call");
+      expect(kinds).toContain("tool_result");
+    } finally {
+      ws.close();
+    }
+  });
+
+  // ── Error handling ───────────────────────────────────────────────
+
+  it("sends chat.error when Ollama throws", async () => {
+    mockStreamOllama.mockRejectedValue(new Error("Ollama request failed: 503"));
+
+    const ws = await connectClient();
+    try {
+      const errorPromise = waitForMessage(ws, (m) => m.type === "chat.error");
+      sendJson(ws, makeChatSend());
+      const error = await errorPromise;
+
+      expect(error.type).toBe("chat.error");
+      expect(error.message).toBe("Ollama request failed: 503");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("does not send chat.error when stream is aborted via chat.stop", async () => {
+    // Make Ollama hang until aborted
+    mockStreamOllama.mockImplementation(async (args) => {
+      return new Promise((_, reject) => {
+        args.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+    });
+
+    const ws = await connectClient();
+    try {
+      const chatSend = makeChatSend();
+      sendJson(ws, chatSend);
+
+      // Give the handler a moment to start processing
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Send stop
+      sendJson(ws, {
+        type: "chat.stop",
+        conversationId: chatSend.conversationId,
+      });
+
+      // Wait briefly for any messages
+      const received: ParsedMessage[] = [];
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 500);
+        function onMessage(raw: Buffer | ArrayBuffer | Buffer[]) {
+          const msg = JSON.parse(raw.toString()) as ParsedMessage;
+          received.push(msg);
+        }
+        ws.on("message", onMessage);
+        setTimeout(() => {
+          ws.off("message", onMessage);
+          clearTimeout(timer);
+          resolve();
+        }, 500);
+      });
+
+      // Should NOT have a chat.error (abort is silent)
+      const chatError = received.find((m) => m.type === "chat.error");
+      expect(chatError).toBeUndefined();
+
+      // Should NOT have a chat.done (stream was aborted)
+      const chatDone = received.find((m) => m.type === "chat.done");
+      expect(chatDone).toBeUndefined();
+    } finally {
+      ws.close();
+    }
+  });
+
+  // ── Edge cases ───────────────────────────────────────────────────
+
+  it("ignores malformed JSON messages without crashing", async () => {
+    const ws = await connectClient();
+    try {
+      // Send garbage
+      ws.send("not valid json {{{");
+
+      // Server should still respond to a valid ping
+      const pongPromise = waitForMessage(ws, (m) => m.type === "pong");
+      sendJson(ws, { type: "ping" });
+      const pong = await pongPromise;
+      expect(pong.type).toBe("pong");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("ignores unknown message types without crashing", async () => {
+    const ws = await connectClient();
+    try {
+      sendJson(ws, { type: "unknown.message", data: "test" });
+
+      // Should still respond to ping
+      const pongPromise = waitForMessage(ws, (m) => m.type === "pong");
+      sendJson(ws, { type: "ping" });
+      const pong = await pongPromise;
+      expect(pong.type).toBe("pong");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("handles concurrent conversations independently", async () => {
+    const responses: Record<string, string> = {
+      "conv-a": "Response for conversation A",
+      "conv-b": "Response for conversation B",
+    };
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      // Find the conversationId from the calling context by checking user step content
+      const userStep = args.steps.find(
+        (s: ConversationStep) => s.kind === "user"
+      );
+      const convId = userStep?.content === "Hello A" ? "conv-a" : "conv-b";
+      const step = makeStep("assistant", responses[convId]);
+      args.onDelta([step]);
+      return [step];
+    });
+
+    const ws = await connectClient();
+    try {
+      const allDonePromise = collectMessages(
+        ws,
+        (msgs) => msgs.filter((m) => m.type === "chat.done").length === 2
+      );
+
+      sendJson(ws, {
+        ...makeChatSend({ conversationId: "conv-a" }),
+        steps: [makeStep("system", ""), makeStep("user", "Hello A")],
+      });
+
+      sendJson(ws, {
+        ...makeChatSend({ conversationId: "conv-b" }),
+        steps: [makeStep("system", ""), makeStep("user", "Hello B")],
+      });
+
+      const messages = await allDonePromise;
+      const doneMessages = messages.filter((m) => m.type === "chat.done");
+
+      const doneA = doneMessages.find((m) => m.conversationId === "conv-a");
+      const doneB = doneMessages.find((m) => m.conversationId === "conv-b");
+
+      expect(doneA).toBeDefined();
+      expect(doneA!.steps![0].content).toBe("Response for conversation A");
+
+      expect(doneB).toBeDefined();
+      expect(doneB!.steps![0].content).toBe("Response for conversation B");
+    } finally {
+      ws.close();
+    }
+  });
+});

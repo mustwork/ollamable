@@ -12,6 +12,7 @@
     "lint": "next lint",
     "test": "npm run test:unit",
     "test:unit": "vitest run",
+    "test:integration": "vitest run -c vitest.server.config.ts",
     "test:e2e": "node scripts/run-playwright.mjs"
   },
   "dependencies": {
