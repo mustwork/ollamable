@@ -32,11 +32,13 @@ export interface ToolDefinition {
 }
 
 export interface ToolCallPayload {
+  id?: string;
   name: string;
   arguments: Record<string, unknown>;
 }
 
 export interface ToolResultPayload {
+  id?: string;
   name: string;
 }
 
@@ -64,6 +66,7 @@ export interface Conversation {
   title: string;
   titleEdited?: boolean;
   model: string;
+  provider?: string;
   temperature?: number;
   systemPrompt: string;
   createdAt: string;
@@ -75,6 +78,8 @@ export interface Conversation {
 
 export interface OllamaModel {
   name: string;
+  provider?: string;
+  providerName?: string;
   parameterSize?: string;
   family?: string;
   families?: string[];

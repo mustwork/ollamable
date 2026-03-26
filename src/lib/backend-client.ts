@@ -25,6 +25,7 @@ interface ServerMessage {
 interface StreamRequest {
   conversationId: string;
   model: string;
+  provider?: string;
   steps: ConversationStep[];
   tools: ToolDefinition[];
   temperature?: number;
@@ -86,7 +87,7 @@ export class BackendClient {
     send: (data: unknown) => void,
     request: StreamRequest
   ): { promise: Promise<ConversationStep[]>; stop: () => void } {
-    const { conversationId, model, steps, tools, temperature } = request;
+    const { conversationId, model, provider, steps, tools, temperature } = request;
 
     const promise = new Promise<ConversationStep[]>((resolve, reject) => {
       this.pending.set(conversationId, { request, resolve, reject });
@@ -96,6 +97,7 @@ export class BackendClient {
       type: "chat.send",
       conversationId,
       model,
+      provider,
       steps,
       tools,
       temperature,

@@ -1,10 +1,11 @@
 import type WebSocket from "ws";
 import { randomUUID } from "node:crypto";
-import { streamOllamaResponse } from "./ollama-client.js";
 import { ToolDispatcher } from "./tool-executor.js";
 import { WebSearchExecutor } from "./tools/web-search.js";
 import { McpBridge } from "./tools/mcp-bridge.js";
 import { ContextPrepExecutor } from "./tools/context-prep.js";
+import { LlmRouter } from "./llm-router.js";
+import { loadProviderConfigs } from "./provider-config.js";
 import type {
   ClientMessage,
   ConversationStep,
@@ -22,12 +23,14 @@ interface McpConfig {
 
 export class ConnectionHandler {
   private ws: WebSocket;
+  private router: LlmRouter;
   private dispatcher: ToolDispatcher;
   private mcpBridge: McpBridge;
   private abortControllers = new Map<string, AbortController>();
 
-  constructor(ws: WebSocket) {
+  constructor(ws: WebSocket, router?: LlmRouter) {
     this.ws = ws;
+    this.router = router ?? new LlmRouter(loadProviderConfigs());
     this.dispatcher = new ToolDispatcher();
     this.mcpBridge = new McpBridge();
 
@@ -100,7 +103,7 @@ export class ConnectionHandler {
   private async handleChatSend(
     msg: Extract<ClientMessage, { type: "chat.send" }>
   ): Promise<void> {
-    const { conversationId, model, tools, temperature } = msg;
+    const { conversationId, model, provider, tools, temperature } = msg;
     const controller = new AbortController();
     this.abortControllers.set(conversationId, controller);
 
@@ -110,11 +113,12 @@ export class ConnectionHandler {
     const originalCount = steps.length;
 
     try {
-      // Tool loop: keep calling Ollama until we get a response with no tool calls
+      // Tool loop: keep calling the LLM until we get a response with no tool calls
       while (true) {
         if (controller.signal.aborted) break;
 
-        const responseSteps = await streamOllamaResponse({
+        const responseSteps = await this.router.streamResponse({
+          provider,
           model,
           steps,
           tools,
@@ -181,7 +185,7 @@ export class ConnectionHandler {
             content: result,
             createdAt: new Date().toISOString(),
             expanded: true,
-            toolResult: { name },
+            toolResult: { id: toolStep.toolCall!.id, name },
           });
         }
 

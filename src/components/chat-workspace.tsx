@@ -23,6 +23,7 @@ import {
   List,
   ListItemButton,
   ListItemText,
+  ListSubheader,
   MenuItem,
   Paper,
   Select,
@@ -63,6 +64,7 @@ import {
 } from "@/src/lib/chat";
 import {
   buildOllamaChatBody,
+  fetchAllModels,
   fetchModelMeta,
   fetchModels,
 } from "@/src/lib/ollama";
@@ -145,13 +147,24 @@ export function ChatWorkspace() {
 
     async function loadModels() {
       try {
-        const remoteModels = await fetchModels();
+        // Try the backend first — it aggregates all configured providers
+        const remoteModels = await fetchAllModels();
         if (!cancelled && remoteModels.length > 0) {
           setModels(remoteModels);
+          return;
+        }
+      } catch {
+        // Backend unreachable — fall back to direct Ollama fetch
+      }
+
+      try {
+        const ollamaModels = await fetchModels();
+        if (!cancelled && ollamaModels.length > 0) {
+          setModels(ollamaModels);
         }
       } catch {
         if (!cancelled) {
-          setError("Could not reach Ollama at http://localhost:11434. Using fallback model list.");
+          setError("Could not reach the backend or Ollama. Using fallback model list.");
         }
       } finally {
         if (!cancelled) {
@@ -260,6 +273,7 @@ export function ChatWorkspace() {
       updateConversation(selectedConversation.id, (conversation) => ({
         ...conversation,
         model: availableModels[0].name,
+        provider: availableModels[0].provider,
         updatedAt: new Date().toISOString(),
       }));
     }
@@ -277,8 +291,9 @@ export function ChatWorkspace() {
   }
 
   function handleCreateConversation() {
-    const model = availableModels[0]?.name ?? fallbackModels[0].name;
-    const conversation = createConversation(model, configuredTools);
+    const firstModel = availableModels[0];
+    const model = firstModel?.name ?? fallbackModels[0].name;
+    const conversation = createConversation(model, configuredTools, firstModel?.provider);
     setConversations((current) => [conversation, ...current]);
     setSelectedConversationId(conversation.id);
     setComposerValue("");
@@ -313,9 +328,11 @@ export function ChatWorkspace() {
       return;
     }
 
+    const modelEntry = availableModels.find((m) => m.name === model);
     updateConversation(selectedConversation.id, (conversation) => ({
       ...conversation,
       model,
+      provider: modelEntry?.provider,
       updatedAt: new Date().toISOString(),
     }));
   }
@@ -483,6 +500,7 @@ export function ChatWorkspace() {
     const { promise, stop } = backendClientRef.current.startStream(wsSend, {
       conversationId: nextConversation.id,
       model: nextConversation.model,
+      provider: nextConversation.provider,
       steps: stepsToSend,
       tools: activeTools,
       temperature: nextConversation.temperature,
@@ -809,11 +827,7 @@ export function ChatWorkspace() {
                 disabled={loadingModels}
                 size="small"
               >
-                {availableModels.map((model) => (
-                  <MenuItem key={model.name} value={model.name}>
-                    {model.name}
-                  </MenuItem>
-                ))}
+                {groupModelsByProvider(availableModels)}
               </Select>
             </FormControl>
           ) : null}
@@ -1625,6 +1639,41 @@ function findResponseStartIndex(steps: ConversationStep[], assistantIndex: numbe
   }
 
   return 0;
+}
+
+function groupModelsByProvider(models: OllamaModel[]) {
+  const providers = new Map<string, OllamaModel[]>();
+  for (const model of models) {
+    const key = model.providerName ?? "Local";
+    const group = providers.get(key) ?? [];
+    group.push(model);
+    providers.set(key, group);
+  }
+
+  // If there's only one provider, skip the subheaders
+  if (providers.size <= 1) {
+    return models.map((model) => (
+      <MenuItem key={model.name} value={model.name}>
+        {model.name}
+      </MenuItem>
+    ));
+  }
+
+  const elements: React.ReactNode[] = [];
+  for (const [providerName, group] of providers) {
+    elements.push(
+      <ListSubheader key={`header-${providerName}`}>{providerName}</ListSubheader>
+    );
+    for (const model of group) {
+      elements.push(
+        <MenuItem key={model.name} value={model.name}>
+          {model.name}
+        </MenuItem>
+      );
+    }
+  }
+
+  return elements;
 }
 
 function isEmbeddingModel(model: OllamaModel) {

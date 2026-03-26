@@ -6,11 +6,13 @@ export interface ToolDefinition {
 }
 
 export interface ToolCallPayload {
+  id?: string;
   name: string;
   arguments: Record<string, unknown>;
 }
 
 export interface ToolResultPayload {
+  id?: string;
   name: string;
 }
 
@@ -75,6 +77,7 @@ export type ClientMessage =
       type: "chat.send";
       conversationId: string;
       model: string;
+      provider?: string;
       steps: ConversationStep[];
       tools: ToolDefinition[];
       temperature?: number;

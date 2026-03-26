@@ -1,7 +1,7 @@
 import type { ConversationStep, ToolDefinition } from "./types.js";
 import { randomUUID } from "node:crypto";
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_URL ?? "http://localhost:11434/api";
+const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434/api";
 
 interface StreamChunk {
   done?: boolean;
@@ -63,6 +63,7 @@ export function buildOllamaChatBody(args: {
 }
 
 export async function streamOllamaResponse(args: {
+  baseUrl?: string;
   model: string;
   steps: ConversationStep[];
   tools: ToolDefinition[];
@@ -70,10 +71,10 @@ export async function streamOllamaResponse(args: {
   onDelta: (steps: ConversationStep[]) => void;
   signal?: AbortSignal;
 }): Promise<ConversationStep[]> {
-  const { model, steps, tools, temperature, onDelta, signal } = args;
+  const { baseUrl = DEFAULT_OLLAMA_URL, model, steps, tools, temperature, onDelta, signal } = args;
 
   const body = buildOllamaChatBody({ model, steps, tools, stream: true, temperature });
-  const response = await fetch(`${OLLAMA_BASE_URL}/chat`, {
+  const response = await fetch(`${baseUrl}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

@@ -6,8 +6,50 @@ import type {
   ToolDefinition,
 } from "@/src/types/chat";
 import { createStep } from "@/src/lib/chat";
+import { WS_URL } from "@/src/lib/backend-client";
 
 const OLLAMA_BASE_URL = "http://localhost:11434/api";
+
+/** Derive the backend HTTP URL from the WebSocket URL. */
+function backendHttpUrl(): string {
+  return WS_URL.replace(/^ws/, "http");
+}
+
+/**
+ * Fetch models from the backend server which aggregates all configured
+ * providers. Falls back to direct Ollama fetch if the backend is
+ * unreachable.
+ */
+export async function fetchAllModels(): Promise<OllamaModel[]> {
+  const response = await fetch(`${backendHttpUrl()}/models`);
+  if (!response.ok) {
+    throw new Error(`Backend /models failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as {
+    models: Array<{
+      name: string;
+      provider?: string;
+      providerName?: string;
+      family?: string;
+      families?: string[];
+      parameterSize?: string;
+      format?: string;
+      quantizationLevel?: string;
+    }>;
+  };
+
+  return data.models.map((m) => ({
+    name: m.name,
+    provider: m.provider,
+    providerName: m.providerName,
+    family: m.family,
+    families: m.families,
+    parameterSize: m.parameterSize,
+    format: m.format,
+    quantizationLevel: m.quantizationLevel,
+  }));
+}
 
 interface TagsResponse {
   models?: Array<{

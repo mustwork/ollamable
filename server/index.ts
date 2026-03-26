@@ -1,23 +1,63 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { ConnectionHandler } from "./ws-handler.js";
+import { LlmRouter } from "./llm-router.js";
+import { loadProviderConfigs } from "./provider-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
 const MCP_CONFIG = process.env.MCP_CONFIG ?? resolve(__dirname, "mcp-config.json");
 
-const httpServer = createServer((_req, res) => {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ status: "ok", service: "ollamable-server" }));
-});
+const providerConfigs = loadProviderConfigs();
+const router = new LlmRouter(providerConfigs);
+
+console.log(
+  `[server] Providers: ${providerConfigs.map((p) => p.name).join(", ")}`
+);
+
+// ── HTTP server with /models endpoint ────────────────────────────────
+
+const httpServer = createServer(
+  async (req: IncomingMessage, res: ServerResponse) => {
+    // CORS headers for frontend fetch
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.url === "/models" && req.method === "GET") {
+      try {
+        const models = await router.listAllModels();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ models }));
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch models";
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: message }));
+      }
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", service: "ollamable-server" }));
+  }
+);
+
+// ── WebSocket server ─────────────────────────────────────────────────
 
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on("connection", (ws) => {
   console.log("[ws] client connected");
-  const handler = new ConnectionHandler(ws);
+  const handler = new ConnectionHandler(ws, router);
   void handler.initMcp(MCP_CONFIG);
 
   ws.on("close", () => {

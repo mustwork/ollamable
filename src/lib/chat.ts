@@ -53,7 +53,7 @@ export function createStep(
   };
 }
 
-export function createConversation(model: string, tools: ToolDefinition[] = []): Conversation {
+export function createConversation(model: string, tools: ToolDefinition[] = [], provider?: string): Conversation {
   const now = new Date().toISOString();
   const systemStep = createStep("system", "System Prompt", "");
 
@@ -62,6 +62,7 @@ export function createConversation(model: string, tools: ToolDefinition[] = []):
     title: "New conversation",
     titleEdited: false,
     model,
+    provider,
     systemPrompt: "",
     createdAt: now,
     updatedAt: now,
