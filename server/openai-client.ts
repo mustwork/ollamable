@@ -312,6 +312,10 @@ function toOpenAIMessages(steps: ConversationStep[]) {
     function: { name: string; arguments: string };
   }> = [];
 
+  // Track generated IDs so tool_result steps without persisted IDs can be
+  // matched to their corresponding tool_call by name (in order).
+  const generatedIdsByName = new Map<string, string[]>();
+
   for (const step of steps) {
     if (step.kind === "meta" || step.kind === "reasoning") continue;
 
@@ -339,8 +343,17 @@ function toOpenAIMessages(steps: ConversationStep[]) {
     }
 
     if (step.kind === "tool_call" && step.toolCall) {
+      const callId = step.toolCall.id ?? `call_${randomUUID().slice(0, 8)}`;
+
+      // Remember the generated ID so the matching tool_result can reuse it
+      if (!step.toolCall.id) {
+        const queue = generatedIdsByName.get(step.toolCall.name) ?? [];
+        queue.push(callId);
+        generatedIdsByName.set(step.toolCall.name, queue);
+      }
+
       pendingToolCalls.push({
-        id: step.toolCall.id ?? `call_${randomUUID().slice(0, 8)}`,
+        id: callId,
         type: "function",
         function: {
           name: step.toolCall.name,
@@ -353,10 +366,17 @@ function toOpenAIMessages(steps: ConversationStep[]) {
     if (step.kind === "tool_result" && step.toolResult) {
       flushToolCalls(messages, pendingToolCalls);
       pendingToolCalls = [];
+
+      // Use the persisted ID, or fall back to the ID generated for the
+      // matching tool_call with the same name (consumed in order).
+      const resultId =
+        step.toolResult.id ??
+        generatedIdsByName.get(step.toolResult.name)?.shift() ??
+        `call_${randomUUID().slice(0, 8)}`;
+
       messages.push({
         role: "tool",
-        tool_call_id:
-          step.toolResult.id ?? `call_${randomUUID().slice(0, 8)}`,
+        tool_call_id: resultId,
         content: step.content,
       });
     }

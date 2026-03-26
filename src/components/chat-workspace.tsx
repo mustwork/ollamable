@@ -265,15 +265,33 @@ export function ChatWorkspace() {
       return;
     }
 
-    const selectedModelExists = availableModels.some(
-      (model) => model.name === selectedConversation.model
+    // Try to find an exact (provider, model) match first, then fall back to name-only
+    const exactMatch = availableModels.find(
+      (m) =>
+        m.name === selectedConversation.model &&
+        m.provider === selectedConversation.provider
     );
+    const nameMatch = availableModels.find(
+      (m) => m.name === selectedConversation.model
+    );
+    const match = exactMatch ?? nameMatch;
 
-    if (!selectedModelExists) {
+    if (!match) {
+      // Model not found at all — reset to first available
       updateConversation(selectedConversation.id, (conversation) => ({
         ...conversation,
         model: availableModels[0].name,
         provider: availableModels[0].provider,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+
+    // Repair missing or stale provider on migrated conversations
+    if (selectedConversation.provider !== match.provider) {
+      updateConversation(selectedConversation.id, (conversation) => ({
+        ...conversation,
+        provider: match.provider,
         updatedAt: new Date().toISOString(),
       }));
     }
@@ -323,16 +341,16 @@ export function ChatWorkspace() {
     });
   }
 
-  function handleModelChange(model: string) {
+  function handleModelChange(compositeKey: string) {
     if (!selectedConversation) {
       return;
     }
 
-    const modelEntry = availableModels.find((m) => m.name === model);
+    const { provider, model } = parseModelSelectKey(compositeKey);
     updateConversation(selectedConversation.id, (conversation) => ({
       ...conversation,
       model,
-      provider: modelEntry?.provider,
+      provider,
       updatedAt: new Date().toISOString(),
     }));
   }
@@ -354,8 +372,20 @@ export function ChatWorkspace() {
       return;
     }
 
-    const model = availableModels.find((entry) => entry.name === selectedConversation.model);
+    const model = availableModels.find(
+      (entry) =>
+        entry.name === selectedConversation.model &&
+        entry.provider === selectedConversation.provider
+    );
     if (!model) {
+      return;
+    }
+
+    if (model.provider && model.provider !== "ollama") {
+      setModelMetaOpen(true);
+      setModelMetaLoading(false);
+      setModelMetaError(`Model metadata is only available for Ollama models.`);
+      setModelMeta(null);
       return;
     }
 
@@ -758,10 +788,18 @@ export function ChatWorkspace() {
     }
   }
 
-  const selectedModel = selectedConversation?.model ?? availableModels[0]?.name ?? "";
+  const selectedModel = selectedConversation
+    ? modelSelectKey(selectedConversation.provider, selectedConversation.model)
+    : modelSelectKey(availableModels[0]?.provider, availableModels[0]?.name ?? "");
   const selectedTemperature = selectedConversation?.temperature;
   const temperatureSupported = selectedConversation
-    ? supportsTemperature(availableModels.find((m) => m.name === selectedConversation.model))
+    ? supportsTemperature(
+        availableModels.find(
+          (m) =>
+            m.name === selectedConversation.model &&
+            m.provider === selectedConversation.provider
+        )
+      )
     : false;
 
   const composerMode = pendingToolCall ? "tool_result" : "prompt";
@@ -1641,6 +1679,20 @@ function findResponseStartIndex(steps: ConversationStep[], assistantIndex: numbe
   return 0;
 }
 
+/**
+ * Build a composite key for the model Select so that models with the same
+ * name on different providers remain distinguishable.
+ */
+function modelSelectKey(provider: string | undefined, name: string): string {
+  return provider ? `${provider}:${name}` : name;
+}
+
+function parseModelSelectKey(key: string): { provider?: string; model: string } {
+  const idx = key.indexOf(":");
+  if (idx === -1) return { model: key };
+  return { provider: key.slice(0, idx), model: key.slice(idx + 1) };
+}
+
 function groupModelsByProvider(models: OllamaModel[]) {
   const providers = new Map<string, OllamaModel[]>();
   for (const model of models) {
@@ -1652,11 +1704,14 @@ function groupModelsByProvider(models: OllamaModel[]) {
 
   // If there's only one provider, skip the subheaders
   if (providers.size <= 1) {
-    return models.map((model) => (
-      <MenuItem key={model.name} value={model.name}>
-        {model.name}
-      </MenuItem>
-    ));
+    return models.map((model) => {
+      const value = modelSelectKey(model.provider, model.name);
+      return (
+        <MenuItem key={value} value={value}>
+          {model.name}
+        </MenuItem>
+      );
+    });
   }
 
   const elements: React.ReactNode[] = [];
@@ -1665,8 +1720,9 @@ function groupModelsByProvider(models: OllamaModel[]) {
       <ListSubheader key={`header-${providerName}`}>{providerName}</ListSubheader>
     );
     for (const model of group) {
+      const value = modelSelectKey(model.provider, model.name);
       elements.push(
-        <MenuItem key={model.name} value={model.name}>
+        <MenuItem key={value} value={value}>
           {model.name}
         </MenuItem>
       );
