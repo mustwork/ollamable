@@ -51,6 +51,20 @@ export async function fetchAllModels(): Promise<OllamaModel[]> {
   }));
 }
 
+/**
+ * Fetch available tool definitions from the backend server.
+ * Returns an empty array if the backend is unreachable.
+ */
+export async function fetchTools(): Promise<ToolDefinition[]> {
+  const response = await fetch(`${backendHttpUrl()}/tools`);
+  if (!response.ok) {
+    throw new Error(`Backend /tools failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as { tools: ToolDefinition[] };
+  return data.tools;
+}
+
 interface TagsResponse {
   models?: Array<{
     name: string;

@@ -5,7 +5,20 @@ import {
   loadConversations,
   saveConversations,
 } from "@/src/lib/chat";
-import { configuredTools } from "@/src/config/tools";
+import type { ToolDefinition } from "@/src/types/chat";
+
+const testTools: ToolDefinition[] = [
+  {
+    id: "web-search",
+    name: "web_search",
+    description: "Searches the web using Brave Search and returns relevant results.",
+    inputSchema: JSON.stringify({
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    }),
+  },
+];
 
 describe("chat helpers", () => {
   beforeEach(() => {
@@ -43,22 +56,22 @@ describe("chat helpers", () => {
   });
 
   it("loads a blank conversation when local storage is empty", () => {
-    const conversations = loadConversations(configuredTools);
+    const conversations = loadConversations(testTools);
 
     expect(conversations).toHaveLength(1);
     expect(conversations[0]?.title).toBe("New conversation");
-    expect(conversations[0]?.availableTools).toEqual(configuredTools);
+    expect(conversations[0]?.availableTools).toEqual(testTools);
     expect(conversations[0]?.activeToolIds).toEqual([]);
     expect(conversations[0]?.steps).toHaveLength(1);
     expect(conversations[0]?.steps[0]?.kind).toBe("system");
   });
 
   it("round-trips persisted conversations and re-seeds configured tools", () => {
-    const conversations = [createConversation("llama3.2:latest", configuredTools)];
+    const conversations = [createConversation("llama3.2:latest", testTools)];
 
     saveConversations(conversations);
 
-    expect(loadConversations(configuredTools)).toEqual(conversations);
+    expect(loadConversations(testTools)).toEqual(conversations);
   });
 
   it("formats timestamps into a human-readable label", () => {

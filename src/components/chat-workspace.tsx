@@ -48,12 +48,12 @@ import ReplayIcon from "@mui/icons-material/Replay";
 import SearchIcon from "@mui/icons-material/Search";
 import StopIcon from "@mui/icons-material/Stop";
 import SyncIcon from "@mui/icons-material/Sync";
-import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta } from "@/src/types/chat";
-import { configuredTools } from "@/src/config/tools";
+import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
 import {
   createConversation,
   createStep,
+  ensureConversationTools,
   fallbackModels,
   formatTimestamp,
   inferTitle,
@@ -67,6 +67,7 @@ import {
   fetchAllModels,
   fetchModelMeta,
   fetchModels,
+  fetchTools,
 } from "@/src/lib/ollama";
 import { useWebSocket } from "@/src/lib/use-websocket";
 import { BackendClient, WS_URL } from "@/src/lib/backend-client";
@@ -78,6 +79,7 @@ const TEMPERATURE_OPTIONS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0];
 export function ChatWorkspace() {
   const theme = useTheme();
   const [models, setModels] = useState<OllamaModel[]>(fallbackModels);
+  const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string>("");
   const [composerValue, setComposerValue] = useState("");
@@ -108,6 +110,19 @@ export function ChatWorkspace() {
 
   const handleWsMessage = useCallback(
     (data: unknown) => {
+      const msg = data as { type?: string; tools?: ToolDefinition[] };
+      if (msg.type === "tools.update" && msg.tools) {
+        setTools((current) => {
+          const merged = [...current];
+          for (const tool of msg.tools!) {
+            if (!merged.some((t) => t.id === tool.id)) {
+              merged.push(tool);
+            }
+          }
+          return merged;
+        });
+        return;
+      }
       backendClientRef.current.handleServerMessage(data);
     },
     []
@@ -116,12 +131,37 @@ export function ChatWorkspace() {
   const { send: wsSend, connected: wsConnected } = useWebSocket(WS_URL, handleWsMessage);
 
   useEffect(() => {
-    const initialConversations = loadConversations(configuredTools);
+    const initialConversations = loadConversations([]);
     const selectedId = loadSelectedConversationId() ?? initialConversations[0]?.id ?? "";
 
     setConversations(initialConversations);
     setSelectedConversationId(selectedId);
   }, []);
+
+  // Fetch available tools from the backend
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTools() {
+      try {
+        const remoteTools = await fetchTools();
+        if (!cancelled) {
+          setTools(remoteTools);
+        }
+      } catch {
+        // Backend unreachable — no tools available
+      }
+    }
+    void loadTools();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Re-sync existing conversations when the tool list changes
+  useEffect(() => {
+    if (tools.length === 0) return;
+    setConversations((current) =>
+      current.map((conv) => ensureConversationTools(conv, tools))
+    );
+  }, [tools]);
 
   const availableModels = useMemo(() => {
     const filteredModels = models.filter((model) => !isEmbeddingModel(model));
@@ -311,7 +351,7 @@ export function ChatWorkspace() {
   function handleCreateConversation() {
     const firstModel = availableModels[0];
     const model = firstModel?.name ?? fallbackModels[0].name;
-    const conversation = createConversation(model, configuredTools, firstModel?.provider);
+    const conversation = createConversation(model, tools, firstModel?.provider);
     setConversations((current) => [conversation, ...current]);
     setSelectedConversationId(conversation.id);
     setComposerValue("");

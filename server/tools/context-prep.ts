@@ -1,8 +1,28 @@
 import { randomUUID } from "node:crypto";
 import type { ToolExecutor } from "../tool-executor.js";
-import type { MetaEvent } from "../types.js";
+import type { MetaEvent, ToolDefinition } from "../types.js";
 
 export class ContextPrepExecutor implements ToolExecutor {
+  getToolDefinitions(): ToolDefinition[] {
+    return [
+      {
+        id: "context-prepare",
+        name: "context_prepare",
+        description: "Loads context for a specified skill or topic.",
+        inputSchema: JSON.stringify({
+          type: "object",
+          properties: {
+            skill: {
+              type: "string",
+              description: "The skill or context to load",
+            },
+          },
+          required: ["skill"],
+        }),
+      },
+    ];
+  }
+
   canHandle(name: string): boolean {
     return name === "context_prepare" || name === "skill_reload";
   }

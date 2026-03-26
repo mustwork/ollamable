@@ -29,6 +29,25 @@ const mockModels = {
   ],
 };
 
+const mockTools = {
+  tools: [
+    {
+      id: "web-search",
+      name: "web_search",
+      description:
+        "Searches the web using Brave Search and returns relevant results with titles, URLs, and snippets.",
+      inputSchema: JSON.stringify({
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The search query" },
+          count: { type: "number", description: "Number of results (default 5, max 20)" },
+        },
+        required: ["query"],
+      }),
+    },
+  ],
+};
+
 // ── Per-test WebSocket handler ───────────────────────────────────────
 
 type WsHandler = (message: Record<string, unknown>, server: WebSocketRoute) => void;
@@ -53,6 +72,14 @@ test.beforeEach(async ({ page }) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(mockModels),
+    });
+  });
+
+  await page.route("http://localhost:3001/tools", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockTools),
     });
   });
 

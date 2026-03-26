@@ -59,6 +59,18 @@ vi.mock("@/src/lib/ollama", async (importOriginal) => {
         "general.architecture": "qwen3",
       },
     }),
+    fetchTools: vi.fn().mockResolvedValue([
+      {
+        id: "web-search",
+        name: "web_search",
+        description: "Searches the web using Brave Search and returns relevant results.",
+        inputSchema: JSON.stringify({
+          type: "object",
+          properties: { query: { type: "string" }, count: { type: "number" } },
+          required: ["query"],
+        }),
+      },
+    ]),
   };
 });
 

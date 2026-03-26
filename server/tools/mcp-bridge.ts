@@ -20,6 +20,11 @@ interface ConnectedServer {
 export class McpBridge implements ToolExecutor {
   private servers: ConnectedServer[] = [];
   private toolToServer = new Map<string, ConnectedServer>();
+  private toolDefs: ToolDefinition[] = [];
+
+  getToolDefinitions(): ToolDefinition[] {
+    return this.toolDefs;
+  }
 
   canHandle(name: string): boolean {
     return this.toolToServer.has(name);
@@ -29,6 +34,7 @@ export class McpBridge implements ToolExecutor {
     configs: Record<string, McpServerConfig>,
     emit: (event: MetaEvent) => void
   ): Promise<ToolDefinition[]> {
+    this.toolDefs = [];
     const discoveredTools: ToolDefinition[] = [];
 
     for (const [name, config] of Object.entries(configs)) {
@@ -98,6 +104,7 @@ export class McpBridge implements ToolExecutor {
       }
     }
 
+    this.toolDefs = discoveredTools;
     return discoveredTools;
   }
 

@@ -34,7 +34,9 @@ export class ConnectionHandler {
     this.dispatcher = new ToolDispatcher();
     this.mcpBridge = new McpBridge();
 
-    this.dispatcher.register(new WebSearchExecutor());
+    if (WebSearchExecutor.isAvailable()) {
+      this.dispatcher.register(new WebSearchExecutor());
+    }
     this.dispatcher.register(this.mcpBridge);
     this.dispatcher.register(new ContextPrepExecutor());
 
@@ -60,9 +62,15 @@ export class ConnectionHandler {
       const config = JSON.parse(raw) as McpConfig;
       if (!config.mcpServers) return [];
 
-      return this.mcpBridge.connect(config.mcpServers, (event) =>
+      const mcpTools = await this.mcpBridge.connect(config.mcpServers, (event) =>
         this.sendMeta("init", event)
       );
+
+      if (mcpTools.length > 0) {
+        this.send({ type: "tools.update", tools: mcpTools });
+      }
+
+      return mcpTools;
     } catch {
       return [];
     }

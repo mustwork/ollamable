@@ -91,4 +91,5 @@ export type ServerMessage =
   | { type: "chat.done"; conversationId: string; steps: ConversationStep[] }
   | { type: "chat.error"; conversationId: string; message: string }
   | { type: "meta.event"; conversationId: string; event: MetaEvent }
+  | { type: "tools.update"; tools: ToolDefinition[] }
   | { type: "pong" };

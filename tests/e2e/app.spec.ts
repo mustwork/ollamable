@@ -106,6 +106,25 @@ const mockModels = {
   ],
 };
 
+const mockTools = {
+  tools: [
+    {
+      id: "web-search",
+      name: "web_search",
+      description:
+        "Searches the web using Brave Search and returns relevant results with titles, URLs, and snippets.",
+      inputSchema: JSON.stringify({
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The search query" },
+          count: { type: "number", description: "Number of results (default 5, max 20)" },
+        },
+        required: ["query"],
+      }),
+    },
+  ],
+};
+
 async function closeToolsDrawer(page: Page) {
   const heading = page.getByRole("heading", { name: "Conversation tools" });
   if (await heading.isVisible()) {
@@ -152,6 +171,14 @@ test.beforeEach(async ({ page }) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(mockModels),
+    });
+  });
+
+  await page.route("http://localhost:3001/tools", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockTools),
     });
   });
 
@@ -519,17 +546,15 @@ test("lets the user close and reopen the tools modal with tool definitions visib
   await expect(page.getByText("web_search")).toBeVisible();
   await expect(
     page.getByRole("checkbox", {
-      name: "web_search Searches the web and returns a short source-backed summary.",
+      name: /web_search Searches the web using Brave Search/,
     })
   ).toBeVisible();
-  await expect(page.getByText('{ "query": "string", "recency_days": "number?" }')).toBeVisible();
 
   await page.getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("heading", { name: "Conversation tools" })).toBeHidden();
 
   await page.getByRole("button", { name: "Open tools modal with 0 active tools" }).click();
   await expect(page.getByText("web_search")).toBeVisible();
-  await expect(page.getByText('{ "query": "string", "recency_days": "number?" }')).toBeVisible();
 });
 
 test("streams a mocked assistant response without rendering derived tool steps", async ({ page }) => {

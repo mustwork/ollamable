@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { ConnectionHandler } from "./ws-handler.js";
 import { LlmRouter } from "./llm-router.js";
+import { ToolDispatcher } from "./tool-executor.js";
+import { WebSearchExecutor } from "./tools/web-search.js";
+import { ContextPrepExecutor } from "./tools/context-prep.js";
 import { loadProviderConfigs } from "./provider-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -13,8 +16,19 @@ const MCP_CONFIG = process.env.MCP_CONFIG ?? resolve(__dirname, "mcp-config.json
 const providerConfigs = loadProviderConfigs();
 const router = new LlmRouter(providerConfigs);
 
+// Static tool registry — used by the /tools HTTP endpoint.
+// MCP tools are per-connection and delivered via WebSocket tools.update instead.
+const staticDispatcher = new ToolDispatcher();
+if (WebSearchExecutor.isAvailable()) {
+  staticDispatcher.register(new WebSearchExecutor());
+}
+staticDispatcher.register(new ContextPrepExecutor());
+
 console.log(
   `[server] Providers: ${providerConfigs.map((p) => p.name).join(", ")}`
+);
+console.log(
+  `[server] Tools: ${staticDispatcher.getToolDefinitions().map((t) => t.name).join(", ") || "(none)"}`
 );
 
 // ── HTTP server with /models endpoint ────────────────────────────────
@@ -43,6 +57,13 @@ const httpServer = createServer(
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: message }));
       }
+      return;
+    }
+
+    if (req.url === "/tools" && req.method === "GET") {
+      const tools = staticDispatcher.getToolDefinitions();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ tools }));
       return;
     }
 

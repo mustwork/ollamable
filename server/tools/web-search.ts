@@ -1,8 +1,40 @@
 import { randomUUID } from "node:crypto";
 import type { ToolExecutor } from "../tool-executor.js";
-import type { MetaEvent } from "../types.js";
+import type { MetaEvent, ToolDefinition } from "../types.js";
 
 export class WebSearchExecutor implements ToolExecutor {
+  private apiKey: string;
+
+  constructor() {
+    this.apiKey = process.env.BRAVE_API_KEY ?? "";
+  }
+
+  static isAvailable(): boolean {
+    return Boolean(process.env.BRAVE_API_KEY);
+  }
+
+  getToolDefinitions(): ToolDefinition[] {
+    return [
+      {
+        id: "web-search",
+        name: "web_search",
+        description:
+          "Searches the web using Brave Search and returns relevant results with titles, URLs, and snippets.",
+        inputSchema: JSON.stringify({
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query" },
+            count: {
+              type: "number",
+              description: "Number of results to return (default 5, max 20)",
+            },
+          },
+          required: ["query"],
+        }),
+      },
+    ];
+  }
+
   canHandle(name: string): boolean {
     return name === "web_search";
   }
@@ -13,6 +45,7 @@ export class WebSearchExecutor implements ToolExecutor {
     emit: (event: MetaEvent) => void
   ): Promise<string> {
     const query = String(args.query ?? "");
+    const count = Math.min(Number(args.count) || 5, 20);
     const startTime = Date.now();
 
     emit({
@@ -25,19 +58,34 @@ export class WebSearchExecutor implements ToolExecutor {
     });
 
     try {
-      // Use DuckDuckGo Lite as a simple, no-API-key search source
-      const encodedQuery = encodeURIComponent(query);
+      const params = new URLSearchParams({ q: query, count: String(count) });
       const response = await fetch(
-        `https://lite.duckduckgo.com/lite/?q=${encodedQuery}`,
+        `https://api.search.brave.com/res/v1/web/search?${params}`,
         {
           headers: {
-            "User-Agent": "Ollamable/0.1 (educational tool)",
+            Accept: "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": this.apiKey,
           },
         }
       );
 
-      const html = await response.text();
-      const results = extractDuckDuckGoResults(html);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Brave Search API error ${response.status}: ${errorText}`
+        );
+      }
+
+      const data = (await response.json()) as BraveSearchResponse;
+      const results: SearchResult[] = (data.web?.results ?? [])
+        .slice(0, count)
+        .map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.description ?? "",
+        }));
+
       const durationMs = Date.now() - startTime;
 
       emit({
@@ -58,7 +106,7 @@ export class WebSearchExecutor implements ToolExecutor {
         });
       }
 
-      return JSON.stringify({ query, results: results.slice(0, 5) });
+      return JSON.stringify({ query, results });
     } catch (error) {
       const durationMs = Date.now() - startTime;
       const message =
@@ -85,50 +133,12 @@ interface SearchResult {
   snippet: string;
 }
 
-function extractDuckDuckGoResults(html: string): SearchResult[] {
-  const results: SearchResult[] = [];
-
-  // DuckDuckGo Lite returns results in a table with specific patterns.
-  // Each result has a link with class "result-link" and a snippet in a <td> with class "result-snippet".
-  const linkRegex =
-    /<a[^>]+class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippetRegex =
-    /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-
-  const links: { url: string; title: string }[] = [];
-  let match: RegExpExecArray | null;
-
-  while ((match = linkRegex.exec(html)) !== null) {
-    links.push({
-      url: match[1],
-      title: stripHtml(match[2]),
-    });
-  }
-
-  const snippets: string[] = [];
-  while ((match = snippetRegex.exec(html)) !== null) {
-    snippets.push(stripHtml(match[1]));
-  }
-
-  for (let i = 0; i < links.length && i < 5; i++) {
-    results.push({
-      title: links[i].title,
-      url: links[i].url,
-      snippet: snippets[i] ?? "",
-    });
-  }
-
-  return results;
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
+interface BraveSearchResponse {
+  web?: {
+    results?: Array<{
+      title: string;
+      url: string;
+      description?: string;
+    }>;
+  };
 }

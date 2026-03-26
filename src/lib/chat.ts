@@ -131,7 +131,7 @@ export function loadConversations(tools: ToolDefinition[]): Conversation[] {
   }
 }
 
-function ensureConversationTools(
+export function ensureConversationTools(
   conversation: Conversation,
   tools: ToolDefinition[]
 ): Conversation {

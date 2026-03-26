@@ -1,6 +1,7 @@
-import type { MetaEvent } from "./types.js";
+import type { MetaEvent, ToolDefinition } from "./types.js";
 
 export interface ToolExecutor {
+  getToolDefinitions(): ToolDefinition[];
   canHandle(name: string): boolean;
   execute(
     name: string,
@@ -14,6 +15,10 @@ export class ToolDispatcher {
 
   register(executor: ToolExecutor): void {
     this.executors.push(executor);
+  }
+
+  getToolDefinitions(): ToolDefinition[] {
+    return this.executors.flatMap((e) => e.getToolDefinitions());
   }
 
   canHandle(name: string): boolean {
