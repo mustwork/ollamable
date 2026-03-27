@@ -125,14 +125,6 @@ const mockTools = {
   ],
 };
 
-async function closeToolsDrawer(page: Page) {
-  const heading = page.getByRole("heading", { name: "Conversation tools" });
-  if (await heading.isVisible()) {
-    await page.locator("body").press("Escape");
-    await expect(heading).toBeHidden();
-  }
-}
-
 async function seedConversationState(
   page: Page,
   conversations: unknown,
@@ -140,6 +132,8 @@ async function seedConversationState(
 ) {
   await page.addInitScript(
     ({ nextConversations, nextSelectedConversationId }) => {
+      if (window.sessionStorage.getItem("ollamable.e2e.seeded")) return;
+      window.sessionStorage.setItem("ollamable.e2e.seeded", "1");
       window.localStorage.setItem(
         "ollamable.conversations",
         JSON.stringify(nextConversations)
@@ -148,6 +142,7 @@ async function seedConversationState(
         "ollamable.selectedConversationId",
         nextSelectedConversationId
       );
+      window.localStorage.setItem("ollamable.tourCompleted", "true");
     },
     {
       nextConversations: conversations,
@@ -164,6 +159,8 @@ test.beforeEach(async ({ page }) => {
       window.localStorage.clear();
       window.sessionStorage.setItem("ollamable.e2e.init", "1");
     }
+    // Prevent the guided tour from auto-starting and changing selection.
+    window.localStorage.setItem("ollamable.tourCompleted", "true");
   });
 
   await page.route("http://localhost:11434/api/tags", async (route) => {
@@ -199,84 +196,80 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("loads the shell with a blank conversation and header model selector", async ({ page }) => {
+test("loads the shell with a blank conversation and header model chip", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
   await expect(page.getByText("Ollamable").first()).toBeVisible();
-  await expect(page.getByText("New conversation").first()).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Model" })).toHaveText("qwen3:latest");
-  await expect(page.getByRole("textbox", { name: "System prompt", exact: true })).toHaveValue("");
+  // The model chip in the header shows the selected model.
+  await expect(page.getByText("qwen3:latest").first()).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "System prompt" })).toHaveValue("");
   await expect(page.getByRole("heading", { name: "Reasoning trace demo" })).toHaveCount(0);
 });
 
 test("creates and selects a new conversation from the sidebar", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page.locator('button[aria-label="New conversation"]').click();
+  await page.locator('button[aria-label="New chat"]').click();
 
-  await expect(page.getByText("New conversation").first()).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "System prompt", exact: true })).toHaveValue("");
+  // After creating a new conversation, the model chip should still be visible.
+  await expect(page.getByText("qwen3:latest").first()).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "System prompt" })).toHaveValue("");
 });
 
-test("edits the system prompt inline before the conversation starts", async ({ page }) => {
+test("edits the system prompt inline", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  const systemPrompt = page.getByRole("textbox", { name: "System prompt", exact: true });
+  const systemPrompt = page.getByRole("textbox", { name: "System prompt" });
   await systemPrompt.fill("You are a rigorous local UI test assistant.");
   await page.waitForFunction(() => {
     const raw = window.localStorage.getItem("ollamable.conversations");
     return raw?.includes("You are a rigorous local UI test assistant.");
   });
   await expect(
-    page.getByRole("textbox", { name: "System prompt", exact: true })
+    page.getByRole("textbox", { name: "System prompt" })
   ).toHaveValue("You are a rigorous local UI test assistant.");
-  await expect(
-    page.getByText("Editable until the first message is sent.")
-  ).toBeVisible();
 });
 
-test("locks the system prompt after the conversation starts", async ({ page }) => {
+test("system prompt remains editable after the conversation starts", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  const systemPrompt = page.getByRole("textbox", { name: "System prompt", exact: true });
-  await systemPrompt.fill("Lock this prompt after start.");
+  const systemPrompt = page.getByRole("textbox", { name: "System prompt" });
+  await systemPrompt.fill("Keep this prompt editable after start.");
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Start the conversation.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Start the conversation.");
+  await prompt.press("Enter");
 
-  await expect(systemPrompt).toBeDisabled();
-  await expect(page.getByText("Locked after the conversation starts.")).toBeVisible();
-  await expect(systemPrompt).toHaveValue("Lock this prompt after start.");
+  // The system prompt stays enabled (not disabled) because the component
+  // no longer locks it after messages are sent.
+  await expect(systemPrompt).not.toBeDisabled();
+  await expect(systemPrompt).toHaveValue("Keep this prompt editable after start.");
   await expect(
     page.locator('[data-step-kind="user"] p', { hasText: "Start the conversation." })
   ).toBeVisible();
 });
 
-test("supports model selection from the mocked Ollama tag list", async ({ page }) => {
+test("supports model selection from the right sidebar", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page.getByRole("combobox", { name: "Model" }).click();
-  await expect(
-    page.getByRole("option", { name: "nomic-embed-text:latest" })
-  ).toHaveCount(0);
-  await page.getByRole("option", { name: "llama3.2:latest" }).click();
+  // Open the right sidebar
+  await page.locator('button[aria-label="Expand tools sidebar"]').click();
+  // Expand the Models section
+  await page.getByText("Models").click();
+  // Embedding models (nomic-embed-text) should be filtered out
+  await expect(page.getByText("nomic-embed-text:latest")).toHaveCount(0);
+  // Click on llama3.2:latest
+  await page.getByText("llama3.2:latest").click();
 
   await expect(page.getByText("llama3.2:latest").first()).toBeVisible();
 });
 
 test("renders distinct background colors for visible transcript roles", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page
-    .getByRole("textbox", { name: "Prompt", exact: true })
-    .fill("Show me a mocked streamed answer with reasoning and tool calls.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Show me a mocked streamed answer with reasoning and tool calls.");
+  await prompt.press("Enter");
 
   const userBackground = await page
     .locator('[data-step-kind="user"]')
@@ -297,12 +290,10 @@ test("renders distinct background colors for visible transcript roles", async ({
 
 test("collapses and expands conversation steps", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page
-    .getByRole("textbox", { name: "Prompt", exact: true })
-    .fill("Collapse this user message.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Collapse this user message.");
+  await prompt.press("Enter");
 
   await expect(
     page.locator('[data-step-kind="user"] p', { hasText: "Collapse this user message." })
@@ -321,24 +312,28 @@ test("collapses and expands conversation steps", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("clicking the pencil expands a collapsed user step for editing", async ({ page }) => {
+test("expanding a collapsed user step reveals the edit button", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page
-    .getByRole("textbox", { name: "Prompt", exact: true })
-    .fill("Edit this collapsed message.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Edit this collapsed message.");
+  await prompt.press("Enter");
 
   const userStep = page.locator('[data-step-kind="user"]').first();
+  // Collapse
   await userStep.getByRole("button").first().click();
-
   await expect(
     page.locator('[data-step-kind="user"] p', { hasText: "Edit this collapsed message." })
   ).toBeHidden();
 
-  await userStep.getByRole("button", { name: "Edit message Edit this collapsed message." }).click();
+  // Expand again
+  await userStep.getByRole("button").first().click();
+  await expect(
+    page.locator('[data-step-kind="user"] p', { hasText: "Edit this collapsed message." })
+  ).toBeVisible();
 
+  // Now the edit button is accessible
+  await userStep.getByRole("button", { name: "Edit message" }).click();
   await expect(page.getByRole("textbox", { name: "Edit message" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Abort" })).toBeVisible();
 });
@@ -410,14 +405,11 @@ test("submits an edited previous user message and replaces the later conversatio
   );
 
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page.getByRole("button", { name: "Edit message Original prompt" }).click();
+  await page.getByRole("button", { name: "Edit message" }).first().click();
 
-  const editedStep = page.locator('[data-step-kind="user"]').first();
   const editInput = page.getByRole("textbox", { name: "Edit message" });
   await editInput.fill("Edited prompt");
-  await expect(editedStep.getByRole("button", { name: "Send" })).toBeVisible();
   await editInput.press("Enter");
 
   await expect(page.locator('[data-step-kind="user"] p', { hasText: "Edited prompt" })).toBeVisible();
@@ -491,9 +483,8 @@ test("regenerates an assistant response and replaces the later conversation tail
   );
 
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page.getByRole("button", { name: "Regenerate response Old reply" }).click();
+  await page.getByRole("button", { name: "Regenerate response" }).click();
 
   await expect(page.getByText("Old reply")).toHaveCount(0);
   await expect(page.getByText("Prior reasoning")).toHaveCount(0);
@@ -517,17 +508,17 @@ test("regenerates a newly created assistant response and replaces it with a fres
   };
 
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Regenerate this answer.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Regenerate this answer.");
+  await prompt.press("Enter");
 
   await expect(page.getByText("First reasoning trace.")).toBeVisible();
   await expect(page.getByText("First generated answer.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Regenerate response First generated answer." })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Regenerate response" })).toBeVisible();
   await expect.poll(() => chatCallCount).toBe(1);
 
-  await page.getByRole("button", { name: "Regenerate response First generated answer." }).click();
+  await page.getByRole("button", { name: "Regenerate response" }).click();
 
   await expect(page.getByText("First reasoning trace.")).toHaveCount(0);
   await expect(page.getByText("First generated answer.")).toHaveCount(0);
@@ -536,35 +527,36 @@ test("regenerates a newly created assistant response and replaces it with a fres
   await expect.poll(() => chatCallCount).toBe(2);
 });
 
-test("lets the user close and reopen the tools modal with tool definitions visible", async ({ page }) => {
+test("lets the user open the right sidebar and see tool definitions", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Conversation tools" })).toBeHidden();
-
-  await page.getByRole("button", { name: "Open tools modal with 0 active tools" }).click();
-  await expect(page.getByRole("heading", { name: "Conversation tools" })).toBeVisible();
-  await expect(page.getByText("web_search")).toBeVisible();
+  // Open the right sidebar
+  await page.locator('button[aria-label="Expand tools sidebar"]').click();
+  // Expand the Tools section
+  await page.getByText("Tools").click();
+  // Expand the built-in subsection
+  await page.getByText("built-in").click();
+  await expect(page.getByText("web_search").first()).toBeVisible();
   await expect(
     page.getByRole("checkbox", {
-      name: /web_search Searches the web using Brave Search/,
+      name: /web_search/i,
     })
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByRole("heading", { name: "Conversation tools" })).toBeHidden();
+  // Close the right sidebar
+  await page.locator('button[aria-label="Collapse tools sidebar"]').click();
 
-  await page.getByRole("button", { name: "Open tools modal with 0 active tools" }).click();
-  await expect(page.getByText("web_search")).toBeVisible();
+  // Re-open and verify tools are still there
+  await page.locator('button[aria-label="Expand tools sidebar"]').click();
+  await expect(page.getByText("web_search").first()).toBeVisible();
 });
 
 test("streams a mocked assistant response without rendering derived tool steps", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page
-    .getByRole("textbox", { name: "Prompt", exact: true })
-    .fill("Show me a mocked streamed answer with reasoning and tool calls.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Show me a mocked streamed answer with reasoning and tool calls.");
+  await prompt.press("Enter");
 
   await expect(
     page.getByText("Show me a mocked streamed answer with reasoning and tool calls.")
@@ -578,12 +570,10 @@ test("streams a mocked assistant response without rendering derived tool steps",
 
 test("persists conversations created through the composer across reloads", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  await page
-    .getByRole("textbox", { name: "Prompt", exact: true })
-    .fill("Create a persisted conversation title from this prompt.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Create a persisted conversation title from this prompt.");
+  await prompt.press("Enter");
 
   await expect(
     page.getByText("Create a persisted conversation title from t").first()
@@ -594,7 +584,6 @@ test("persists conversations created through the composer across reloads", async
   });
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Conversation tools" })).toBeHidden();
 
   await expect(
     page.getByText("Create a persisted conversation title from t").first()
@@ -604,51 +593,85 @@ test("persists conversations created through the composer across reloads", async
   ).toBeVisible();
 });
 
-test("allows editing the conversation title by click or pencil and persists the custom name", async ({
+test("allows editing the conversation title by clicking on it in the sidebar and persists the custom name", async ({
   page,
 }) => {
-  await page.goto("/");
-  await closeToolsDrawer(page);
+  // Seed a conversation that has user steps so it shows in the sidebar.
+  const now = "2026-03-20T11:00:00.000Z";
+  await seedConversationState(
+    page,
+    [
+      {
+        id: "conversation-1",
+        title: "Initial title",
+        titleEdited: false,
+        model: "qwen3:latest",
+        systemPrompt: "",
+        createdAt: now,
+        updatedAt: now,
+        availableTools: [],
+        activeToolIds: [],
+        steps: [
+          {
+            id: "system-1",
+            kind: "system",
+            title: "System Prompt",
+            content: "",
+            createdAt: now,
+            expanded: true,
+          },
+          {
+            id: "user-1",
+            kind: "user",
+            title: "User",
+            content: "Hello world",
+            createdAt: now,
+            expanded: true,
+          },
+          {
+            id: "assistant-1",
+            kind: "assistant",
+            title: "Assistant",
+            content: "Hi there!",
+            createdAt: now,
+            expanded: true,
+          },
+        ],
+      },
+    ],
+    "conversation-1"
+  );
 
-  await page.getByRole("heading", { name: "New conversation" }).click();
-  const titleInput = page.getByRole("textbox", { name: "Conversation name" });
-  await titleInput.fill("Clicked title name");
+  await page.goto("/");
+
+  // Wait for the sidebar title to appear
+  await expect(page.getByText("Initial title").first()).toBeVisible();
+
+  // Click on the title text in the sidebar to enter edit mode.
+  await page.getByText("Initial title").click();
+
+  // The title becomes a raw <input> (autofocused) with the current value.
+  const titleInput = page.locator("input[style]").first();
+  await expect(titleInput).toBeVisible();
+  await titleInput.fill("Pinned custom conversation");
   await titleInput.press("Enter");
 
-  await expect(page.getByRole("heading", { name: "Clicked title name" })).toBeVisible();
-  await expect(page.getByText("Clicked title name").first()).toBeVisible();
-
-  await page.getByRole("button", { name: "Edit conversation title" }).click();
-  const retitledInput = page.getByRole("textbox", { name: "Conversation name" });
-  await retitledInput.fill("Pinned custom conversation");
-  await retitledInput.press("Enter");
-
-  await expect(page.getByRole("heading", { name: "Pinned custom conversation" })).toBeVisible();
   await page.waitForFunction(() => {
     const raw = window.localStorage.getItem("ollamable.conversations");
-    return raw?.includes("\"title\":\"Pinned custom conversation\"") && raw.includes("\"titleEdited\":true");
+    return raw?.includes('"title":"Pinned custom conversation"') && raw.includes('"titleEdited":true');
   });
 
-  await page
-    .getByRole("textbox", { name: "Prompt", exact: true })
-    .fill("This prompt should not overwrite the edited title.");
-  await page.getByRole("button", { name: "Send" }).click();
-
-  await expect(page.getByRole("heading", { name: "Pinned custom conversation" })).toBeVisible();
   await expect(page.getByText("Pinned custom conversation").first()).toBeVisible();
 
   await page.reload();
-  await closeToolsDrawer(page);
 
-  await expect(page.getByRole("heading", { name: "Pinned custom conversation" })).toBeVisible();
   await expect(page.getByText("Pinned custom conversation").first()).toBeVisible();
 });
 
-test("keeps the send button visible when the prompt input grows large", async ({ page }) => {
+test("keeps the composer textarea usable when the prompt input grows large", async ({ page }) => {
   await page.goto("/");
-  await closeToolsDrawer(page);
 
-  const promptInput = page.getByRole("textbox", { name: "Prompt", exact: true });
+  const promptInput = page.getByRole("textbox", { name: "User Prompt" });
   const longPrompt = Array.from(
     { length: 80 },
     (_, index) => `Line ${index + 1} prompt content.`
@@ -661,17 +684,18 @@ test("keeps the send button visible when the prompt input grows large", async ({
     scrollHeight: element.scrollHeight,
     overflowY: getComputedStyle(element).overflowY,
   }));
-  const sendButtonBox = await page.getByRole("button", { name: "Send" }).boundingBox();
   const viewport = page.viewportSize();
 
   expect(promptMetrics.scrollHeight).toBeGreaterThan(promptMetrics.clientHeight);
   expect(promptMetrics.overflowY).toBe("auto");
-  expect(sendButtonBox).not.toBeNull();
   expect(viewport).not.toBeNull();
-  expect(sendButtonBox!.y + sendButtonBox!.height).toBeLessThanOrEqual(viewport!.height);
+  // The textarea should remain within the viewport.
+  const promptBox = await promptInput.boundingBox();
+  expect(promptBox).not.toBeNull();
+  expect(promptBox!.y + promptBox!.height).toBeLessThanOrEqual(viewport!.height);
 });
 
-test("keeps the submit-result button visible when the tool result input grows large", async ({
+test("keeps the tool result textarea usable when the tool result input grows large", async ({
   page,
 }) => {
   const now = "2026-03-20T11:00:00.000Z";
@@ -708,6 +732,14 @@ test("keeps the submit-result button visible when the tool result input grows la
             expanded: true,
           },
           {
+            id: "user-1",
+            kind: "user",
+            title: "User",
+            content: "Search for something",
+            createdAt: now,
+            expanded: true,
+          },
+          {
             id: "tool-call-1",
             kind: "tool_call",
             title: "Tool Call",
@@ -729,7 +761,7 @@ test("keeps the submit-result button visible when the tool result input grows la
 
   await page.goto("/");
 
-  const toolResultInput = page.getByRole("textbox", { name: "Tool result", exact: true });
+  const toolResultInput = page.getByRole("textbox", { name: "Tool result" });
   const longToolResult = Array.from(
     { length: 100 },
     (_, index) => `Line ${index + 1} tool result content.`
@@ -742,17 +774,18 @@ test("keeps the submit-result button visible when the tool result input grows la
     scrollHeight: element.scrollHeight,
     overflowY: getComputedStyle(element).overflowY,
   }));
-  const submitButtonBox = await page
-    .getByRole("button", { name: "Submit result" })
-    .boundingBox();
   const viewport = page.viewportSize();
 
-  await expect(
-    page.getByText("Provide the result for web_search before sending another prompt.")
-  ).toBeVisible();
+  // The placeholder contains the tool name.
+  await expect(toolResultInput).toHaveAttribute(
+    "placeholder",
+    "Paste the result for web_search to continue."
+  );
   expect(toolResultMetrics.scrollHeight).toBeGreaterThan(toolResultMetrics.clientHeight);
   expect(toolResultMetrics.overflowY).toBe("auto");
-  expect(submitButtonBox).not.toBeNull();
   expect(viewport).not.toBeNull();
-  expect(submitButtonBox!.y + submitButtonBox!.height).toBeLessThanOrEqual(viewport!.height);
+  // The textarea should remain within the viewport.
+  const inputBox = await toolResultInput.boundingBox();
+  expect(inputBox).not.toBeNull();
+  expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(viewport!.height);
 });

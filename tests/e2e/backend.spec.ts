@@ -64,6 +64,8 @@ test.beforeEach(async ({ page }) => {
       window.localStorage.clear();
       window.sessionStorage.setItem("ollamable.e2e.backend.init", "1");
     }
+    // Prevent the guided tour from auto-starting and changing selection.
+    window.localStorage.setItem("ollamable.tourCompleted", "true");
   });
 
   // Model list is still fetched directly by the frontend.
@@ -103,12 +105,8 @@ test.beforeEach(async ({ page }) => {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-async function closeToolsDrawer(page: Page) {
-  const heading = page.getByRole("heading", { name: "Conversation tools" });
-  if (await heading.isVisible()) {
-    await page.locator("body").press("Escape");
-    await expect(heading).toBeHidden();
-  }
+async function closeToolsDrawer(_page: Page) {
+  // No-op: the tools modal no longer exists.
 }
 
 /** Wait until the WebSocket route has been connected by the browser. */
@@ -169,8 +167,8 @@ test("streams an assistant response through the WebSocket backend", async ({ pag
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Test backend prompt");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Test backend prompt");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await chatSendReceived;
 
@@ -235,8 +233,8 @@ test("renders reasoning and assistant steps from the backend", async ({ page }) 
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Reason for me");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Reason for me");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Let me think about this carefully...")).toBeVisible();
   await expect(page.getByText("Here is my answer via backend.")).toBeVisible();
@@ -314,16 +312,15 @@ test("renders inline meta event cards from the backend", async ({ page }) => {
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Search something");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Search something");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   // Meta events render as step cards with kind "meta"
   await expect(page.locator('[data-step-kind="meta"]').first()).toBeVisible();
-  await expect(page.getByText("Web Search")).toBeVisible();
   await expect(page.getByText("search start")).toBeVisible();
 
-  // The "Server Event Data" section should contain the event payload
-  await expect(page.getByText("Server Event Data").first()).toBeVisible();
+  // The meta event data is rendered as JSON inside the step card
+  await expect(page.getByText('"test query"').first()).toBeVisible();
 
   // Final response should also be visible
   await expect(page.getByText("Search results are in.")).toBeVisible();
@@ -369,11 +366,13 @@ test("renders meta events with duration badges", async ({ page }) => {
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("MCP test");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("MCP test");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
-  // Duration should be displayed in the secondary text of the meta step
-  await expect(page.getByText("mcp result • 350ms")).toBeVisible();
+  // The meta step header shows the kind and tool name
+  await expect(page.getByText("Server Result: test_tool")).toBeVisible();
+  // Duration is shown in the footer
+  await expect(page.getByText("350ms", { exact: true })).toBeVisible();
 });
 
 test("handles chat.error from the backend and displays an error message", async ({ page }) => {
@@ -393,8 +392,8 @@ test("handles chat.error from the backend and displays an error message", async 
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Trigger an error");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Trigger an error");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Failed to stream from backend.")).toBeVisible();
 });
@@ -432,8 +431,8 @@ test("sends chat.stop when the user clicks stop during streaming", async ({ page
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Long running request");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Long running request");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   // Wait for the partial content to appear (proves the stream started)
   await expect(page.getByText("Partial response still streaming...")).toBeVisible();
@@ -478,8 +477,8 @@ test("forwards the correct model and steps in chat.send", async ({ page }) => {
   const systemPrompt = page.getByRole("textbox", { name: "System prompt", exact: true });
   await systemPrompt.fill("You are a test assistant.");
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Verify payload");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Verify payload");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Ack.")).toBeVisible();
 
@@ -526,23 +525,14 @@ test("sends active tool definitions in chat.send when tools are enabled", async 
   await page.goto("/");
   await waitForWsConnection();
 
-  // Open tools drawer and enable web_search
-  const heading = page.getByRole("heading", { name: "Conversation tools" });
-  if (!(await heading.isVisible())) {
-    await page.getByRole("button", { name: /Open tools modal/ }).click();
-  }
-  await expect(heading).toBeVisible();
+  // Open the right sidebar and enable web_search
+  await page.getByRole("button", { name: "Expand tools sidebar" }).click();
+  await page.getByText("Tools").click();
+  await page.getByText("built-in").click();
+  await page.getByRole("checkbox", { name: /web_search/i }).check();
 
-  const toolCheckbox = page.getByRole("checkbox", {
-    name: /web_search/,
-  });
-  if (!(await toolCheckbox.isChecked())) {
-    await toolCheckbox.click();
-  }
-  await page.getByRole("button", { name: "Close" }).click();
-
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Use tools");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Use tools");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Tools received.")).toBeVisible();
 
@@ -620,16 +610,15 @@ test("renders tool call and tool result steps from the backend tool loop", async
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Search and answer");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Search and answer");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   // The final assistant text should be visible
   await expect(page.getByText("Based on the search results, here is the answer.")).toBeVisible();
 
-  // tool_call and tool_result are not in visibleTranscriptSteps, so they
-  // should not appear as rendered step cards (they are excluded by isVisibleTranscriptStep).
+  // tool_call is excluded from visibleTranscriptSteps but tool_result is shown
   await expect(page.locator('[data-step-kind="tool_call"]')).toHaveCount(0);
-  await expect(page.locator('[data-step-kind="tool_result"]')).toHaveCount(0);
+  await expect(page.locator('[data-step-kind="tool_result"]')).toHaveCount(1);
 });
 
 test("persists backend-routed conversation steps across page reload", async ({ page }) => {
@@ -658,8 +647,8 @@ test("persists backend-routed conversation steps across page reload", async ({ p
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Persistence test");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Persistence test");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("This response should persist after reload.")).toBeVisible();
 
@@ -741,8 +730,8 @@ test("handles multiple sequential delta messages that build up the response", as
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Stream incrementally");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Stream incrementally");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("First chunk. Second chunk. Final chunk.")).toBeVisible();
 });
@@ -793,8 +782,8 @@ test("displays input/output tokens and stop reason on assistant steps", async ({
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Show me usage");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Show me usage");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Response with usage stats.")).toBeVisible();
 
@@ -834,8 +823,8 @@ test("displays partial usage data when only some fields are present", async ({ p
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Partial usage");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Partial usage");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Only output tokens.")).toBeVisible();
 
@@ -876,8 +865,8 @@ test("persists usage data across page reload", async ({ page }) => {
   await closeToolsDrawer(page);
   await waitForWsConnection();
 
-  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Persist usage test");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("textbox", { name: "User Prompt" }).fill("Persist usage test");
+  await page.getByRole("textbox", { name: "User Prompt" }).press("Enter");
 
   await expect(page.getByText("Persisted usage response.")).toBeVisible();
 

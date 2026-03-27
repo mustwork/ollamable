@@ -112,6 +112,7 @@ export function ChatWorkspace() {
     toolsSectionOpen: false,
     clientSectionOpen: false,
     renderMarkdown: true,
+    showTour: true,
     subsections: {},
   });
 
