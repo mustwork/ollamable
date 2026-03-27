@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Markdown from "react-markdown";
 import {
   Alert,
   AppBar,
@@ -98,6 +99,8 @@ export function ChatWorkspace() {
     tempSectionOpen: false,
     maxTokensSectionOpen: false,
     toolsSectionOpen: false,
+    clientSectionOpen: false,
+    renderMarkdown: true,
     subsections: {},
   });
 
@@ -121,6 +124,8 @@ export function ChatWorkspace() {
     tempSectionOpen,
     maxTokensSectionOpen,
     toolsSectionOpen,
+    clientSectionOpen,
+    renderMarkdown,
     subsections,
   } = sidebarState;
 
@@ -148,7 +153,7 @@ export function ChatWorkspace() {
   );
 
   const toggleRightSection = useCallback(
-    (key: "modelSectionOpen" | "tempSectionOpen" | "maxTokensSectionOpen" | "toolsSectionOpen") => {
+    (key: "modelSectionOpen" | "tempSectionOpen" | "maxTokensSectionOpen" | "toolsSectionOpen" | "clientSectionOpen") => {
       setSidebarState((prev) => {
         const opening = !prev[key];
         const next = {
@@ -157,6 +162,7 @@ export function ChatWorkspace() {
           tempSectionOpen: false,
           maxTokensSectionOpen: false,
           toolsSectionOpen: false,
+          clientSectionOpen: false,
           [key]: opening,
         };
         saveSidebarState(next);
@@ -912,6 +918,32 @@ export function ChatWorkspace() {
     stopStreamRef.current?.();
   }
 
+  function navigateToTool(toolId: string) {
+    // Determine which subsection this tool belongs to
+    const mcpMatch = toolId.match(/^mcp-(.+?)-/);
+    const subsectionKey = mcpMatch ? `tools-mcp-${mcpMatch[1]}` : "tools-builtin";
+
+    // Open right sidebar, expand tools section and the correct subsection
+    setSidebarState((prev) => {
+      const next = {
+        ...prev,
+        rightSidebarOpen: true,
+        toolsSectionOpen: true,
+        subsections: { ...prev.subsections, [subsectionKey]: true },
+      };
+      saveSidebarState(next);
+      return next;
+    });
+
+    // Scroll to the tool after the sidebar animations settle
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const el = document.querySelector(`[data-tool-id="${toolId}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 350);
+    });
+  }
+
 
   const selectedModel = selectedConversation
     ? modelSelectKey(selectedConversation.provider, selectedConversation.model)
@@ -1151,11 +1183,10 @@ export function ChatWorkspace() {
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
                   {(() => {
                     const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
-                    const tools = conversation.steps.filter((s) => s.kind === "tool_call").length;
                     const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
                     const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
                     const tokens = input + output;
-                    return <>{msgs} messages • {tools} tool uses<br />{tokens > 0 ? <>{tokens.toLocaleString()} tokens<br /></> : null}{formatTimestamp(conversation.updatedAt)}</>;
+                    return <>{msgs} messages • {formatTimestamp(conversation.updatedAt)}{tokens > 0 ? <><br />{tokens.toLocaleString()} tokens</> : null}</>;
                   })()}
                 </Typography>
               </Paper>
@@ -1229,7 +1260,7 @@ export function ChatWorkspace() {
                       >
                         <Stack spacing={1}>
                           {activeTools.map((tool) => (
-                            <Box key={tool.id}>
+                            <Box key={tool.id} onClick={() => navigateToTool(tool.id)} sx={{ cursor: "pointer", "&:hover": { opacity: 0.7 } }}>
                               <Typography variant="body2" sx={{ fontWeight: 600 }}>{tool.name}</Typography>
                               <Typography variant="body2" color="text.secondary">{tool.description}</Typography>
                             </Box>
@@ -1309,9 +1340,17 @@ export function ChatWorkspace() {
                               <Button variant="contained" onClick={() => void handleSaveStepEdit(step.id)}>Send</Button>
                             </Stack>
                           </Stack>
+                        ) : ((step.kind === "assistant" || step.kind === "user") && renderMarkdown) ? (
+                          <Box sx={{ lineHeight: 1.7, color: "text.primary", "& pre": { fontFamily: "monospace", whiteSpace: "pre-wrap", backgroundColor: "var(--surface-inset)", p: 1.5, borderRadius: 1, overflow: "auto" }, "& code": { fontFamily: "monospace", fontSize: "0.9em" }, "& p:first-of-type": { mt: 0 }, "& p:last-of-type": { mb: 0 } }}>
+                            <Markdown>{step.content.replace(/^\n+|\n+$/g, "")}</Markdown>
+                          </Box>
                         ) : (
-                          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, color: "text.primary" }}>
-                            {(step.kind === "user" || step.kind === "assistant") ? step.content.replace(/^\n+|\n+$/g, "") : step.content}
+                          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, color: "text.primary", fontFamily: step.kind === "tool_result" || step.kind === "harness" ? "monospace" : undefined }}>
+                            {(step.kind === "user" || step.kind === "assistant")
+                              ? step.content.replace(/^\n+|\n+$/g, "")
+                              : (step.kind === "tool_result" || step.kind === "harness")
+                                ? prettyPrintJson(step.content)
+                                : step.content}
                           </Typography>
                         )}
                         {step.toolCalls && step.toolCalls.length > 0 ? (
@@ -1763,7 +1802,7 @@ export function ChatWorkspace() {
                           <Collapse in={hasToolFilter || isSubsectionOpen("tools-builtin")}>
                             <Stack spacing={0.5} sx={{ mt: 0.5 }}>
                               {builtinTools.map((tool) => (
-                                <Paper key={tool.id} variant="outlined" sx={{ p: 1.5 }}>
+                                <Paper key={tool.id} data-tool-id={tool.id} variant="outlined" sx={{ p: 1.5 }}>
                                   <FormControlLabel
                                     control={
                                       <Checkbox
@@ -1818,7 +1857,7 @@ export function ChatWorkspace() {
                               <Collapse in={hasToolFilter || isSubsectionOpen(key)}>
                                 <Stack spacing={0.5} sx={{ mt: 0.5 }}>
                                   {serverTools.map((tool) => (
-                                    <Paper key={tool.id} variant="outlined" sx={{ p: 1.5 }}>
+                                    <Paper key={tool.id} data-tool-id={tool.id} variant="outlined" sx={{ p: 1.5 }}>
                                       <FormControlLabel
                                         control={
                                           <Checkbox
@@ -1846,6 +1885,33 @@ export function ChatWorkspace() {
                           );
                         })}
                       </Stack>
+                    </Collapse>
+                  </Box>
+
+                  <Divider />
+
+                  <Box>
+                    <ListItemButton
+                      onClick={() => toggleRightSection("clientSectionOpen")}
+                      sx={{ mx: -2, px: 2, py: 0.5 }}
+                    >
+                      <Typography variant="overline" color="text.secondary" sx={{ flexGrow: 1 }}>
+                        Client
+                      </Typography>
+                      {clientSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
+                    </ListItemButton>
+                    <Collapse in={clientSectionOpen}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={renderMarkdown}
+                            onChange={() => updateSidebar({ renderMarkdown: !renderMarkdown })}
+                            size="small"
+                          />
+                        }
+                        label={<Typography variant="body2">Render markdown</Typography>}
+                        sx={{ mt: 0.5 }}
+                      />
                     </Collapse>
                   </Box>
                 </Stack>
@@ -2501,6 +2567,14 @@ function JsonPreviewDialog({ open, onClose, title, subtitle, json }: {
       </DialogActions>
     </Dialog>
   );
+}
+
+function prettyPrintJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
 }
 
 async function copyTextToClipboard(value: string) {
