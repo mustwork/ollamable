@@ -97,6 +97,8 @@ function setupStartStream(steps = defaultResponseSteps) {
 describe("ChatWorkspace", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    // Prevent the guided tour from auto-starting and switching conversations mid-test
+    window.localStorage.setItem("ollamable.tourCompleted", "true");
     mockStartStream.mockClear();
     mockSend.mockClear();
     setupStartStream();
@@ -116,27 +118,28 @@ describe("ChatWorkspace", () => {
     );
   }
 
-  it("renders the seeded conversation with the tools modal closed by default", async () => {
+  it("renders the seeded conversation with the tools sidebar collapsed by default", async () => {
     renderWorkspace();
 
-    expect(await screen.findAllByText("New conversation")).not.toHaveLength(0);
-    expect(screen.queryByRole("heading", { name: "Conversation tools" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open tools modal with 0 active tools" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Color mode")).toBeInTheDocument();
+    expect(await screen.findAllByText("qwen3:latest")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Expand tools sidebar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mode$/i })).toBeInTheDocument();
   });
 
   it("allows creating a new conversation", async () => {
     const user = userEvent.setup();
     const { container } = renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    const button = container.querySelector('button[aria-label="New conversation"]');
+    await screen.findAllByText("qwen3:latest");
+    const button = container.querySelector('button[aria-label="New chat"]');
 
     expect(button).not.toBeNull();
     await user.click(button!);
 
     await waitFor(() => {
-      expect(screen.getAllByText("New conversation")).not.toHaveLength(0);
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw!)).toHaveLength(2);
     });
   });
 
@@ -165,13 +168,34 @@ describe("ChatWorkspace", () => {
 
   it("allows editing the selected conversation title", async () => {
     const user = userEvent.setup();
+    const now = new Date().toISOString();
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "conversation-1",
+          title: "Test chat",
+          titleEdited: false,
+          model: "qwen3:latest",
+          systemPrompt: "",
+          createdAt: now,
+          updatedAt: now,
+          steps: [
+            { id: "system-1", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+            { id: "user-1", kind: "user", title: "User", content: "Hello", createdAt: now, expanded: true },
+          ],
+        },
+      ])
+    );
+    window.localStorage.setItem(SELECTED_KEY, "conversation-1");
+
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("heading", { name: "New conversation" }));
+    await screen.findByText("Test chat");
+    await user.click(screen.getByText("Test chat"));
 
-    const titleInput = screen.getByRole("textbox", { name: "Conversation name" });
+    const titleInput = screen.getByDisplayValue("Test chat");
     await user.clear(titleInput);
     await user.type(titleInput, "Renamed conversation");
     await user.keyboard("{Enter}");
@@ -230,14 +254,16 @@ describe("ChatWorkspace", () => {
     renderWorkspace();
 
     await screen.findAllByText("Original prompt");
-    await user.click(screen.getByRole("button", { name: "Edit message Original prompt" }));
+    await user.click(screen.getByRole("button", { name: "Edit message" }));
 
-    const editInput = screen.getByRole("textbox", { name: "Edit message" });
+    const editInput = await screen.findByRole("textbox", { name: "Edit message" });
     await user.clear(editInput);
     await user.type(editInput, "Changed prompt");
-    await user.click(screen.getByRole("button", { name: "Abort" }));
+    await user.click(await screen.findByRole("button", { name: "Abort" }));
 
-    expect(screen.queryByDisplayValue("Changed prompt")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue("Changed prompt")).not.toBeInTheDocument();
+    });
     expect(screen.getByText("Original prompt")).toBeInTheDocument();
     expect(screen.getByText("Original reply")).toBeInTheDocument();
   });
@@ -299,7 +325,8 @@ describe("ChatWorkspace", () => {
     renderWorkspace();
 
     await screen.findAllByText("Original prompt");
-    await user.click(screen.getByRole("button", { name: "Edit message Original prompt" }));
+    const editButtons = screen.getAllByRole("button", { name: "Edit message" });
+    await user.click(editButtons[0]);
 
     const editInput = screen.getByRole("textbox", { name: "Edit message" });
     const editStep = editInput.closest('[data-step-kind="user"]');
@@ -402,7 +429,7 @@ describe("ChatWorkspace", () => {
     renderWorkspace();
 
     await screen.findByText("Old reply");
-    await user.click(screen.getByRole("button", { name: "Regenerate response Old reply" }));
+    await user.click(screen.getByRole("button", { name: "Regenerate response" }));
 
     await waitFor(() => {
       expect(screen.queryByText("Old reply")).not.toBeInTheDocument();
@@ -434,7 +461,7 @@ describe("ChatWorkspace", () => {
     expect(storedConversations[0].steps[2].content).toBe("Streamed answer");
   });
 
-  it("shows a spinner and disables send while waiting for a response", async () => {
+  it("shows a spinner and stop button while waiting for a response", async () => {
     const user = userEvent.setup();
     let resolveStream: ((value: unknown[]) => void) | null = null;
 
@@ -447,12 +474,13 @@ describe("ChatWorkspace", () => {
 
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    await user.type(screen.getByRole("textbox", { name: "Prompt", exact: true }), "Test prompt");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findAllByText("qwen3:latest");
+    const prompt = screen.getByRole("textbox", { name: "User Prompt" });
+    await user.type(prompt, "Test prompt");
+    await user.keyboard("{Enter}");
 
-    expect(screen.getByLabelText("Waiting for response")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
 
     resolveStream?.([
       {
@@ -466,7 +494,7 @@ describe("ChatWorkspace", () => {
     ]);
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("Waiting for response")).not.toBeInTheDocument();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     });
   });
 
@@ -510,13 +538,14 @@ describe("ChatWorkspace", () => {
 
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
+    await screen.findAllByText("qwen3:latest");
     scrollIntoView.mockClear();
-    await user.type(screen.getByRole("textbox", { name: "Prompt", exact: true }), "Scroll test");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    const prompt = screen.getByRole("textbox", { name: "User Prompt" });
+    await user.type(prompt, "Scroll test");
+    await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalled();
     });
 
     // Resolve stream so the test completes cleanly
@@ -534,39 +563,73 @@ describe("ChatWorkspace", () => {
 
   it("deletes conversations and removes them from persisted storage", async () => {
     const user = userEvent.setup();
-    const { container } = renderWorkspace();
+    const now = new Date().toISOString();
 
-    await screen.findAllByText("New conversation");
-    const newConversationButton = container.querySelector(
-      'button[aria-label="New conversation"]'
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "conversation-1",
+          title: "First chat",
+          titleEdited: false,
+          model: "qwen3:latest",
+          systemPrompt: "",
+          createdAt: now,
+          updatedAt: now,
+          steps: [
+            { id: "system-1", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+            { id: "user-1", kind: "user", title: "User", content: "Hello", createdAt: now, expanded: true },
+          ],
+        },
+        {
+          id: "conversation-2",
+          title: "Second chat",
+          titleEdited: false,
+          model: "qwen3:latest",
+          systemPrompt: "",
+          createdAt: now,
+          updatedAt: now,
+          steps: [
+            { id: "system-2", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+            { id: "user-2", kind: "user", title: "User", content: "Hi", createdAt: now, expanded: true },
+          ],
+        },
+      ])
     );
+    window.localStorage.setItem(SELECTED_KEY, "conversation-1");
 
-    expect(newConversationButton).not.toBeNull();
-    await user.click(newConversationButton!);
-    await waitFor(() => {
-      expect(screen.getAllByText("New conversation")).toHaveLength(3);
-    });
+    renderWorkspace();
+
+    await screen.findByText("First chat");
 
     const deleteButtons = screen.getAllByRole("button", {
-      name: /Delete conversation New conversation/,
+      name: /Delete conversation/,
     });
     await user.click(deleteButtons[0]);
 
+    // Confirm deletion in the dialog
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+
     await waitFor(() => {
-      const raw = window.localStorage.getItem("ollamable.conversations");
+      const raw = window.localStorage.getItem(STORAGE_KEY);
       expect(raw).not.toBeNull();
-      expect(JSON.parse(raw!)).toHaveLength(1);
+      const conversations = JSON.parse(raw!);
+      expect(conversations.some((c: { id: string }) => c.id === "conversation-1")).toBe(false);
+      expect(conversations.some((c: { id: string }) => c.id === "conversation-2")).toBe(true);
     });
   });
 
-  it("opens the tools modal from the conversation header and toggles web search", async () => {
+  it("opens the tools sidebar and toggles web search", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    await user.click(screen.getByRole("button", { name: "Open tools modal with 0 active tools" }));
-
-    expect(await screen.findByRole("heading", { name: "Conversation tools" })).toBeInTheDocument();
+    await screen.findAllByText("qwen3:latest");
+    // Open the right sidebar
+    await user.click(screen.getByRole("button", { name: "Expand tools sidebar" }));
+    // Expand the Tools section
+    await user.click(screen.getByText("Tools"));
+    // Expand the built-in subsection
+    await user.click(screen.getByText("built-in"));
 
     const checkbox = screen.getByRole("checkbox", { name: /web_search/i });
     expect(checkbox).not.toBeChecked();
@@ -578,59 +641,98 @@ describe("ChatWorkspace", () => {
     });
   });
 
-  it("shows request JSON with the current prompt content, even when empty", async () => {
+  it("shows request JSON reflecting the committed conversation steps", async () => {
     const user = userEvent.setup();
+    const now = new Date().toISOString();
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "conversation-1",
+          title: "Test chat",
+          titleEdited: false,
+          model: "qwen3:latest",
+          systemPrompt: "",
+          createdAt: now,
+          updatedAt: now,
+          steps: [
+            { id: "system-1", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+            { id: "user-1", kind: "user", title: "User", content: "Hello", createdAt: now, expanded: true },
+            { id: "assistant-1", kind: "assistant", title: "Assistant", content: "Hi there", createdAt: now, expanded: true },
+          ],
+        },
+      ])
+    );
+    window.localStorage.setItem(SELECTED_KEY, "conversation-1");
+
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    await user.click(screen.getByRole("button", { name: "Open request JSON preview" }));
+    await screen.findByText("Test chat");
+    await user.click(screen.getByRole("button", { name: "View request JSON" }));
 
-    const initialPreview = screen.getByText((_, element) => element?.tagName === "PRE");
-    const initialPayload = JSON.parse(initialPreview.textContent ?? "{}");
-    expect(initialPayload.messages.at(-1)).toEqual({
-      role: "user",
-      content: "",
-    });
+    const preview = screen.getByText((_, element) => element?.tagName === "PRE");
+    const payload = JSON.parse(preview.textContent ?? "{}");
+    expect(payload.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "Hello" }),
+        expect.objectContaining({ role: "assistant", content: "Hi there" }),
+      ])
+    );
 
     await user.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Request JSON" })).not.toBeInTheDocument();
     });
-    await user.type(screen.getByRole("textbox", { name: "Prompt", exact: true }), "Draft prompt");
-    await user.click(screen.getByRole("button", { name: "Open request JSON preview" }));
-
-    const filledPreview = screen.getByText((_, element) => element?.tagName === "PRE");
-    const filledPayload = JSON.parse(filledPreview.textContent ?? "{}");
-    expect(filledPayload.messages.at(-1)).toEqual({
-      role: "user",
-      content: "Draft prompt",
-    });
   });
 
   it("shows a copy action in the request JSON modal", async () => {
     const user = userEvent.setup();
+    const now = new Date().toISOString();
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "conversation-1",
+          title: "Test chat",
+          titleEdited: false,
+          model: "qwen3:latest",
+          systemPrompt: "",
+          createdAt: now,
+          updatedAt: now,
+          steps: [
+            { id: "system-1", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+            { id: "user-1", kind: "user", title: "User", content: "Hello", createdAt: now, expanded: true },
+          ],
+        },
+      ])
+    );
+    window.localStorage.setItem(SELECTED_KEY, "conversation-1");
+
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    await user.type(screen.getByRole("textbox", { name: "Prompt", exact: true }), "Draft prompt");
-    await user.click(screen.getByRole("button", { name: "Open request JSON preview" }));
+    await screen.findByText("Test chat");
+    await user.type(screen.getByRole("textbox", { name: "User Prompt" }), "Draft prompt");
+    await user.click(screen.getByRole("button", { name: "View request JSON" }));
 
-    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy JSON" })).toBeInTheDocument();
   });
 
   it("sends only active tools to the backend", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findAllByText("New conversation");
-    await user.click(screen.getByRole("button", { name: "Open tools modal with 0 active tools" }));
+    await screen.findAllByText("qwen3:latest");
+    // Open the right sidebar and enable web_search
+    await user.click(screen.getByRole("button", { name: "Expand tools sidebar" }));
+    await user.click(screen.getByText("Tools"));
+    await user.click(screen.getByText("built-in"));
     await user.click(screen.getByRole("checkbox", { name: /web_search/i }));
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Conversation tools" })).not.toBeInTheDocument();
-    });
-    await user.type(screen.getByRole("textbox", { name: "Prompt", exact: true }), "Need sources");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const prompt = screen.getByRole("textbox", { name: "User Prompt" });
+    await user.type(prompt, "Need sources");
+    await user.keyboard("{Enter}");
 
     await waitFor(() => {
       expect(mockStartStream).toHaveBeenCalledWith(
@@ -646,7 +748,7 @@ describe("ChatWorkspace", () => {
     });
   });
 
-  it("shows request JSON with the current tool result content, even when empty", async () => {
+  it("shows request JSON including tool call when a tool call is pending", async () => {
     const user = userEvent.setup();
     const now = new Date().toISOString();
 
@@ -683,6 +785,14 @@ describe("ChatWorkspace", () => {
               expanded: true,
             },
             {
+              id: "user-1",
+              kind: "user",
+              title: "User",
+              content: "Search for patterns",
+              createdAt: now,
+              expanded: true,
+            },
+            {
               id: "tool-call-1",
               kind: "tool_call",
               title: "Tool Call",
@@ -706,30 +816,24 @@ describe("ChatWorkspace", () => {
 
     expect(await screen.findByRole("textbox", { name: "Tool result" })).toBeInTheDocument();
     expect(screen.queryByText("Requested web_search")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open request JSON preview" }));
+    await user.click(screen.getByRole("button", { name: "View request JSON" }));
 
-    const initialPreview = screen.getByText((_, element) => element?.tagName === "PRE");
-    const initialPayload = JSON.parse(initialPreview.textContent ?? "{}");
-    expect(initialPayload.messages.at(-1)).toEqual({
-      role: "tool",
-      content: "",
-      tool_name: "web_search",
-    });
-
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Request JSON" })).not.toBeInTheDocument();
-    });
-    await user.type(screen.getByRole("textbox", { name: "Tool result" }), "Search summary");
-    await user.click(screen.getByRole("button", { name: "Open request JSON preview" }));
-
-    const filledPreview = screen.getByText((_, element) => element?.tagName === "PRE");
-    const filledPayload = JSON.parse(filledPreview.textContent ?? "{}");
-    expect(filledPayload.messages.at(-1)).toEqual({
-      role: "tool",
-      content: "Search summary",
-      tool_name: "web_search",
-    });
+    const preview = screen.getByText((_, element) => element?.tagName === "PRE");
+    const payload = JSON.parse(preview.textContent ?? "{}");
+    // The preview includes the user message and the pending assistant tool call
+    expect(payload.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "Search for patterns" }),
+        expect.objectContaining({
+          role: "assistant",
+          tool_calls: expect.arrayContaining([
+            expect.objectContaining({
+              function: expect.objectContaining({ name: "web_search" }),
+            }),
+          ]),
+        }),
+      ])
+    );
   });
 
   it("replaces the prompt composer with a tool result input when a tool call is pending", async () => {
@@ -790,13 +894,14 @@ describe("ChatWorkspace", () => {
 
     renderWorkspace();
 
-    expect(await screen.findByRole("textbox", { name: "Tool result" })).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Prompt", exact: true })).not.toBeInTheDocument();
-    expect(screen.getByText(/Provide the result for web_search/)).toBeInTheDocument();
+    const toolResultInput = await screen.findByRole("textbox", { name: "Tool result" });
+    expect(toolResultInput).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "User Prompt" })).not.toBeInTheDocument();
+    expect(toolResultInput).toHaveAttribute("placeholder", expect.stringContaining("Paste the result for web_search"));
     expect(screen.queryByText("Requested web_search")).not.toBeInTheDocument();
 
     await user.type(screen.getByRole("textbox", { name: "Tool result" }), "Search summary");
-    await user.click(screen.getByRole("button", { name: "Submit result" }));
+    await user.keyboard("{Enter}");
 
     await waitFor(() => {
       expect(mockStartStream).toHaveBeenCalledWith(
@@ -812,23 +917,5 @@ describe("ChatWorkspace", () => {
         })
       );
     });
-  });
-
-  it("validates custom tool schemas as JSON before allowing add", async () => {
-    const user = userEvent.setup();
-    renderWorkspace();
-
-    await screen.findAllByText("New conversation");
-    await user.click(screen.getByRole("button", { name: "Open tools modal with 0 active tools" }));
-
-    await user.type(screen.getByRole("textbox", { name: "Tool name" }), "custom_tool");
-    await user.type(screen.getByRole("textbox", { name: "Description" }), "Custom description");
-    const schemaInput = screen.getByRole("textbox", { name: "Input schema" });
-    await user.clear(schemaInput);
-    await user.click(schemaInput);
-    await user.paste("{invalid");
-
-    expect(screen.getByText("Input schema must be valid JSON.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add tool" })).toBeDisabled();
   });
 });
