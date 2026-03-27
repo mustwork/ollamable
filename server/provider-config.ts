@@ -4,6 +4,11 @@ export interface ProviderConfig {
   name: string;
   baseUrl: string;
   apiKey?: string;
+  /**
+   * Known model list. When set, the /models API call is skipped entirely
+   * and these models are used directly.
+   */
+  knownModels?: string[];
 }
 
 /**
@@ -33,6 +38,15 @@ export function loadProviderConfigs(): ProviderConfig[] {
       baseUrl:
         process.env.MINIMAX_BASE_URL ?? "https://api.minimaxi.chat/v1",
       apiKey: process.env.MINIMAX_API_KEY,
+      knownModels: [
+        "MiniMax-M1-80k",
+        "MiniMax-M1-40k",
+        "MiniMax-Text-01",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+      ],
     });
   }
 

@@ -91,10 +91,11 @@ export async function streamOpenAIResponse(args: {
   steps: ConversationStep[];
   tools: ToolDefinition[];
   temperature?: number;
+  maxOutputTokens?: number;
   onDelta: (steps: ConversationStep[]) => void;
   signal?: AbortSignal;
 }): Promise<ConversationStep[]> {
-  const { config, model, steps, tools, temperature, onDelta, signal } = args;
+  const { config, model, steps, tools, temperature, maxOutputTokens, onDelta, signal } = args;
 
   const body: Record<string, unknown> = {
     model,
@@ -117,6 +118,10 @@ export async function streamOpenAIResponse(args: {
     body.temperature = temperature;
   }
 
+  if (maxOutputTokens != null) {
+    body.max_tokens = maxOutputTokens;
+  }
+
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -135,6 +140,7 @@ export async function streamOpenAIResponse(args: {
   const decoder = new TextDecoder();
   let buffer = "";
 
+  const reasoningStep = createStep("reasoning", "Reasoning", "");
   const assistantStep = createStep("assistant", "Assistant", "");
   const toolSteps: ConversationStep[] = [];
 
@@ -145,6 +151,10 @@ export async function streamOpenAIResponse(args: {
   >();
   let lastUsage: SseChunk["usage"];
   let finishReason: string | undefined;
+
+  // Tracks whether we're inside a <think>…</think> region so content
+  // arriving across multiple SSE chunks is routed to the reasoning step.
+  const thinkState = { inside: false };
 
   while (true) {
     const { value, done } = await reader.read();
@@ -158,6 +168,8 @@ export async function streamOpenAIResponse(args: {
       processLine(
         line,
         assistantStep,
+        reasoningStep,
+        thinkState,
         toolSteps,
         pendingToolCalls,
         (u) => { lastUsage = u; },
@@ -165,6 +177,7 @@ export async function streamOpenAIResponse(args: {
       );
 
       const current = compactSteps(
+        reasoningStep,
         assistantStep,
         materialiseToolSteps(pendingToolCalls, toolSteps)
       );
@@ -178,6 +191,8 @@ export async function streamOpenAIResponse(args: {
       processLine(
         line,
         assistantStep,
+        reasoningStep,
+        thinkState,
         toolSteps,
         pendingToolCalls,
         (u) => { lastUsage = u; },
@@ -201,14 +216,56 @@ export async function streamOpenAIResponse(args: {
     };
   }
 
-  return compactSteps(assistantStep, finalToolSteps);
+  return compactSteps(reasoningStep, assistantStep, finalToolSteps);
 }
 
 // ── SSE line processing ──────────────────────────────────────────────
 
+/**
+ * Route a content fragment to the reasoning or assistant step depending on
+ * whether we are inside a `<think>…</think>` region.  Handles fragments that
+ * contain the opening tag, the closing tag, both, or neither.
+ */
+function routeContent(
+  fragment: string,
+  assistantStep: ConversationStep,
+  reasoningStep: ConversationStep,
+  thinkState: { inside: boolean }
+): void {
+  let remaining = fragment;
+
+  while (remaining.length > 0) {
+    if (thinkState.inside) {
+      const closeIdx = remaining.indexOf("</think>");
+      if (closeIdx === -1) {
+        // Still inside thinking — all remaining goes to reasoning
+        reasoningStep.content += remaining;
+        return;
+      }
+      // Consume up to (and including) the closing tag
+      reasoningStep.content += remaining.slice(0, closeIdx);
+      remaining = remaining.slice(closeIdx + "</think>".length);
+      thinkState.inside = false;
+    } else {
+      const openIdx = remaining.indexOf("<think>");
+      if (openIdx === -1) {
+        // Not inside thinking — all remaining goes to assistant
+        assistantStep.content += remaining;
+        return;
+      }
+      // Text before the tag goes to assistant
+      assistantStep.content += remaining.slice(0, openIdx);
+      remaining = remaining.slice(openIdx + "<think>".length);
+      thinkState.inside = true;
+    }
+  }
+}
+
 function processLine(
   raw: string,
   assistantStep: ConversationStep,
+  reasoningStep: ConversationStep,
+  thinkState: { inside: boolean },
   toolSteps: ConversationStep[],
   pendingToolCalls: Map<number, { id: string; name: string; arguments: string }>,
   setUsage: (u: SseChunk["usage"]) => void,
@@ -229,7 +286,7 @@ function processLine(
   const choice = chunk.choices?.[0];
   if (choice) {
     if (choice.delta.content) {
-      assistantStep.content += choice.delta.content;
+      routeContent(choice.delta.content, assistantStep, reasoningStep, thinkState);
     }
 
     for (const tc of choice.delta.tool_calls ?? []) {
@@ -294,12 +351,15 @@ function materialiseToolSteps(
 // ── Step compaction ──────────────────────────────────────────────────
 
 function compactSteps(
+  reasoningStep: ConversationStep,
   assistantStep: ConversationStep,
   toolSteps: ConversationStep[]
 ): ConversationStep[] {
+  const reasoning =
+    reasoningStep.content.trim().length > 0 ? reasoningStep : undefined;
   const visible =
     assistantStep.content.trim().length > 0 ? assistantStep : undefined;
-  return [...toolSteps, visible].filter(Boolean) as ConversationStep[];
+  return [reasoning, ...toolSteps, visible].filter(Boolean) as ConversationStep[];
 }
 
 // ── Message conversion (ConversationStep[] → OpenAI messages) ────────

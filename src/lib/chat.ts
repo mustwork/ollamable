@@ -10,6 +10,42 @@ import type {
 
 export const STORAGE_KEY = "ollamable.conversations";
 export const SELECTED_KEY = "ollamable.selectedConversationId";
+export const SIDEBAR_STATE_KEY = "ollamable.sidebarState";
+
+export interface SidebarState {
+  sidebarOpen: boolean;
+  rightSidebarOpen: boolean;
+  modelSectionOpen: boolean;
+  tempSectionOpen: boolean;
+  maxTokensSectionOpen: boolean;
+  toolsSectionOpen: boolean;
+  /** Per-subsection collapse: key = "builtin" | "mcp-{serverName}" | provider name */
+  subsections: Record<string, boolean>;
+}
+
+const DEFAULT_SIDEBAR_STATE: SidebarState = {
+  sidebarOpen: true,
+  rightSidebarOpen: false,
+  modelSectionOpen: false,
+  tempSectionOpen: false,
+  maxTokensSectionOpen: false,
+  toolsSectionOpen: false,
+  subsections: {},
+};
+
+export function loadSidebarState(): SidebarState {
+  const raw = window.localStorage.getItem(SIDEBAR_STATE_KEY);
+  if (!raw) return { ...DEFAULT_SIDEBAR_STATE };
+  try {
+    return { ...DEFAULT_SIDEBAR_STATE, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_SIDEBAR_STATE };
+  }
+}
+
+export function saveSidebarState(state: SidebarState): void {
+  window.localStorage.setItem(SIDEBAR_STATE_KEY, JSON.stringify(state));
+}
 
 export const fallbackModels: OllamaModel[] = [
   {

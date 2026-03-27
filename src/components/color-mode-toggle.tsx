@@ -4,10 +4,22 @@ import { useEffect, useState } from "react";
 import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
 import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlined";
 import LightModeOutlinedIcon from "@mui/icons-material/LightModeOutlined";
-import { Stack, ToggleButton, ToggleButtonGroup, Tooltip } from "@mui/material";
+import { IconButton, Tooltip } from "@mui/material";
 import { useColorScheme } from "@mui/material/styles";
 
 type ColorMode = "light" | "dark" | "system";
+
+const MODE_CYCLE: ColorMode[] = ["light", "system", "dark"];
+const MODE_ICONS: Record<ColorMode, React.ReactNode> = {
+  light: <LightModeOutlinedIcon fontSize="small" />,
+  system: <DesktopWindowsOutlinedIcon fontSize="small" />,
+  dark: <DarkModeOutlinedIcon fontSize="small" />,
+};
+const MODE_LABELS: Record<ColorMode, string> = {
+  light: "Light mode",
+  system: "System mode",
+  dark: "Dark mode",
+};
 
 export function ColorModeToggle() {
   const { mode, setMode } = useColorScheme();
@@ -19,53 +31,22 @@ export function ColorModeToggle() {
 
   const value: ColorMode = mounted && mode ? mode : "system";
 
+  const handleClick = () => {
+    const currentIndex = MODE_CYCLE.indexOf(value);
+    const nextMode = MODE_CYCLE[(currentIndex + 1) % MODE_CYCLE.length];
+    setMode(nextMode);
+  };
+
   return (
-    <ToggleButtonGroup
-      size="small"
-      exclusive
-      value={value}
-      onChange={(_, nextMode: ColorMode | null) => {
-        if (nextMode) {
-          setMode(nextMode);
-        }
-      }}
-      aria-label="Color mode"
-      sx={{
-        bgcolor: "background.paper",
-        borderRadius: 999,
-        "& .MuiToggleButton-root": {
-          border: 0,
-          px: 1.25,
-          color: "text.secondary",
-          textTransform: "none",
-        },
-        "& .Mui-selected": {
-          bgcolor: "action.selected",
-          color: "text.primary",
-        },
-      }}
-    >
-      <ToggleButton value="light" aria-label="Light mode">
-        <Tooltip title="Light mode">
-          <Stack direction="row" alignItems="center">
-            <LightModeOutlinedIcon fontSize="small" />
-          </Stack>
-        </Tooltip>
-      </ToggleButton>
-      <ToggleButton value="system" aria-label="System mode">
-        <Tooltip title="System mode">
-          <Stack direction="row" alignItems="center">
-            <DesktopWindowsOutlinedIcon fontSize="small" />
-          </Stack>
-        </Tooltip>
-      </ToggleButton>
-      <ToggleButton value="dark" aria-label="Dark mode">
-        <Tooltip title="Dark mode">
-          <Stack direction="row" alignItems="center">
-            <DarkModeOutlinedIcon fontSize="small" />
-          </Stack>
-        </Tooltip>
-      </ToggleButton>
-    </ToggleButtonGroup>
+    <Tooltip title={MODE_LABELS[value]}>
+      <IconButton
+        size="small"
+        onClick={handleClick}
+        aria-label={MODE_LABELS[value]}
+        sx={{ color: "text.secondary" }}
+      >
+        {MODE_ICONS[value]}
+      </IconButton>
+    </Tooltip>
   );
 }

@@ -5,7 +5,7 @@
 
 import type { ProviderConfig } from "./provider-config.js";
 import type { ConversationStep, ToolDefinition } from "./types.js";
-import { streamOllamaResponse } from "./ollama-client.js";
+import { fetchOllamaModelMeta, streamOllamaResponse } from "./ollama-client.js";
 import { fetchOpenAIModels, streamOpenAIResponse } from "./openai-client.js";
 
 // ── Public model type returned by the router ─────────────────────────
@@ -19,6 +19,7 @@ export interface ModelInfo {
   parameterSize?: string;
   format?: string;
   quantizationLevel?: string;
+  capabilities?: string[];
 }
 
 // ── Router class ─────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ export class LlmRouter {
     steps: ConversationStep[];
     tools: ToolDefinition[];
     temperature?: number;
+    maxOutputTokens?: number;
     onDelta: (steps: ConversationStep[]) => void;
     signal?: AbortSignal;
   }): Promise<ConversationStep[]> {
@@ -82,6 +84,7 @@ export class LlmRouter {
         steps: args.steps,
         tools: args.tools,
         temperature: args.temperature,
+        maxOutputTokens: args.maxOutputTokens,
         onDelta: args.onDelta,
         signal: args.signal,
       });
@@ -94,12 +97,29 @@ export class LlmRouter {
         steps: args.steps,
         tools: args.tools,
         temperature: args.temperature,
+        maxOutputTokens: args.maxOutputTokens,
         onDelta: args.onDelta,
         signal: args.signal,
       });
     }
 
     throw new Error(`Unknown provider type: ${config.type}`);
+  }
+
+  /** Fetch model metadata. Only supported for Ollama models. */
+  async showModelMeta(
+    provider: string | undefined,
+    modelName: string
+  ): Promise<unknown> {
+    const config = this.resolveProvider(provider, modelName);
+
+    if (config.type !== "ollama") {
+      throw new Error(
+        `Model metadata is only available for Ollama models (provider: ${config.name}).`
+      );
+    }
+
+    return fetchOllamaModelMeta(config.baseUrl, modelName);
   }
 
   // ── Private helpers ──────────────────────────────────────────────
@@ -132,6 +152,7 @@ export class LlmRouter {
       models?: Array<{
         name: string;
         modified_at?: string;
+        capabilities?: string[];
         details?: {
           family?: string;
           families?: string[];
@@ -153,6 +174,7 @@ export class LlmRouter {
         parameterSize: m.details?.parameter_size,
         format: m.details?.format,
         quantizationLevel: m.details?.quantization_level,
+        capabilities: m.capabilities,
       };
     });
   }
@@ -160,6 +182,18 @@ export class LlmRouter {
   private async fetchOpenAICompatModels(
     config: ProviderConfig
   ): Promise<ModelInfo[]> {
+    // Use the curated known-models list when available
+    if (config.knownModels && config.knownModels.length > 0) {
+      return config.knownModels.map((name) => {
+        this.modelProviderMap.set(name, config);
+        return {
+          name,
+          provider: config.id,
+          providerName: config.name,
+        };
+      });
+    }
+
     const models = await fetchOpenAIModels(config);
     return models.map((m) => {
       this.modelProviderMap.set(m.id, config);

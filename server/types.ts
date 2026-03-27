@@ -79,6 +79,7 @@ export type ClientMessage =
       steps: ConversationStep[];
       tools: ToolDefinition[];
       temperature?: number;
+      maxOutputTokens?: number;
     }
   | { type: "chat.stop"; conversationId: string }
   | { type: "ping" };

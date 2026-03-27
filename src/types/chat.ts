@@ -66,6 +66,7 @@ export interface Conversation {
   model: string;
   provider?: string;
   temperature?: number;
+  maxOutputTokens?: number;
   systemPrompt: string;
   createdAt: string;
   updatedAt: string;
@@ -85,6 +86,7 @@ export interface OllamaModel {
   parentModel?: string;
   format?: string;
   quantizationLevel?: string;
+  capabilities?: string[];
 }
 
 export interface OllamaModelMeta {

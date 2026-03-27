@@ -98,7 +98,7 @@ export class ConnectionHandler {
     if (msg.type === "chat.send") {
       const toolNames = (msg.tools ?? []).map((t) => t.name).join(", ");
       console.log(
-        `[ws] <- chat.send  conversation=${msg.conversationId}  model=${msg.model}  steps=${msg.steps.length}  tools=[${toolNames}]`
+        `[ws] <- chat.send  conversation=${msg.conversationId}  model=${msg.model}  steps=${msg.steps.length}  tools=[${toolNames}]  temp=${msg.temperature ?? "default"}  maxTokens=${msg.maxOutputTokens ?? "default"}`
       );
       await this.handleChatSend(msg);
     }
@@ -107,7 +107,7 @@ export class ConnectionHandler {
   private async handleChatSend(
     msg: Extract<ClientMessage, { type: "chat.send" }>
   ): Promise<void> {
-    const { conversationId, model, provider, tools, temperature } = msg;
+    const { conversationId, model, provider, tools, temperature, maxOutputTokens } = msg;
     const controller = new AbortController();
     this.abortControllers.set(conversationId, controller);
 
@@ -116,10 +116,15 @@ export class ConnectionHandler {
     let steps = [...msg.steps];
     const originalCount = steps.length;
 
+    let loopIteration = 0;
+
     try {
       // Tool loop: keep calling the LLM until we get a response with no tool calls
       while (true) {
         if (controller.signal.aborted) break;
+        loopIteration++;
+
+        console.log(`[ws] conversation=${conversationId} loop=${loopIteration} sending ${steps.length} steps to ${provider ?? "default"}/${model}`);
 
         const responseSteps = await this.router.streamResponse({
           provider,
@@ -127,6 +132,7 @@ export class ConnectionHandler {
           steps,
           tools,
           temperature,
+          maxOutputTokens,
           signal: controller.signal,
           onDelta: (partialSteps) => {
             this.send({
@@ -149,10 +155,16 @@ export class ConnectionHandler {
           (s) => s.toolCall && this.dispatcher.canHandle(s.toolCall.name)
         );
 
+        console.log(
+          `[ws] conversation=${conversationId} loop=${loopIteration} LLM returned ${responseSteps.length} step(s): ${responseSteps.map((s) => s.kind).join(", ")}` +
+          (toolCallSteps.length > 0 ? ` | tool_calls=[${toolCallSteps.map((s) => s.toolCall!.name).join(", ")}] (${executableToolCalls.length} executable)` : "")
+        );
+
         if (executableToolCalls.length === 0) {
           // No executable tool calls — we're done.
           // Send ALL new steps accumulated during the loop, not just the final response.
           const allNewSteps = [...steps.slice(originalCount), ...responseSteps];
+          console.log(`[ws] conversation=${conversationId} done after ${loopIteration} loop(s), returning ${allNewSteps.length} new step(s)`);
           this.send({
             type: "chat.done",
             conversationId,
@@ -166,6 +178,10 @@ export class ConnectionHandler {
 
         for (const toolStep of executableToolCalls) {
           const { name, arguments: toolArgs } = toolStep.toolCall!;
+          const argSummary = JSON.stringify(toolArgs);
+          const truncatedArgs = argSummary.length > 200 ? argSummary.slice(0, 200) + "…" : argSummary;
+
+          console.log(`[ws] conversation=${conversationId} tool.exec ${name} args=${truncatedArgs}`);
 
           this.sendMeta(conversationId, {
             id: randomUUID(),
@@ -176,11 +192,16 @@ export class ConnectionHandler {
             timestamp: new Date().toISOString(),
           });
 
+          const startTime = Date.now();
           const result = await this.dispatcher.execute(
             name,
             toolArgs,
             (event) => this.sendMeta(conversationId, event)
           );
+          const durationMs = Date.now() - startTime;
+          const truncatedResult = result.length > 300 ? result.slice(0, 300) + "…" : result;
+
+          console.log(`[ws] conversation=${conversationId} tool.done ${name} ${durationMs}ms result=${truncatedResult}`);
 
           toolResultSteps.push({
             id: randomUUID(),
@@ -203,9 +224,13 @@ export class ConnectionHandler {
         ];
       }
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        console.log(`[ws] conversation=${conversationId} aborted by client`);
+        return;
+      }
       const message =
         error instanceof Error ? error.message : "Unknown server error";
+      console.error(`[ws] conversation=${conversationId} error: ${message}`);
       this.send({ type: "chat.error", conversationId, message });
     } finally {
       this.abortControllers.delete(conversationId);

@@ -29,6 +29,7 @@ interface StreamRequest {
   steps: ConversationStep[];
   tools: ToolDefinition[];
   temperature?: number;
+  maxOutputTokens?: number;
   onDelta: (steps: ConversationStep[]) => void;
   onMetaEvent: (step: ConversationStep) => void;
 }
@@ -87,7 +88,7 @@ export class BackendClient {
     send: (data: unknown) => void,
     request: StreamRequest
   ): { promise: Promise<ConversationStep[]>; stop: () => void } {
-    const { conversationId, model, provider, steps, tools, temperature } = request;
+    const { conversationId, model, provider, steps, tools, temperature, maxOutputTokens } = request;
 
     const promise = new Promise<ConversationStep[]>((resolve, reject) => {
       this.pending.set(conversationId, { request, resolve, reject });
@@ -101,6 +102,7 @@ export class BackendClient {
       steps,
       tools,
       temperature,
+      maxOutputTokens,
     });
 
     const stop = () => {

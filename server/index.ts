@@ -55,7 +55,7 @@ const httpServer = createServer(
   async (req: IncomingMessage, res: ServerResponse) => {
     // CORS headers for frontend fetch
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (req.method === "OPTIONS") {
@@ -72,6 +72,28 @@ const httpServer = createServer(
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to fetch models";
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: message }));
+      }
+      return;
+    }
+
+    if (req.url === "/models/show" && req.method === "POST") {
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(chunk as Buffer);
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as {
+          model: string;
+          provider?: string;
+        };
+        const meta = await router.showModelMeta(body.provider, body.model);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(meta));
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch model metadata";
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: message }));
       }

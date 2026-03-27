@@ -37,14 +37,55 @@ function createStep(
   };
 }
 
+interface ShowResponse {
+  license?: string;
+  modelfile?: string;
+  parameters?: string;
+  template?: string;
+  system?: string;
+  details?: {
+    parent_model?: string;
+    format?: string;
+    family?: string;
+    families?: string[];
+    parameter_size?: string;
+    quantization_level?: string;
+  };
+  model_info?: Record<string, string | number | boolean | undefined>;
+  capabilities?: string[];
+  modified_at?: string;
+}
+
+export async function fetchOllamaModelMeta(
+  baseUrl: string,
+  modelName: string
+): Promise<ShowResponse> {
+  const response = await fetch(`${baseUrl}/show`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: modelName }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ollama /show failed: ${response.status}`);
+  }
+
+  return (await response.json()) as ShowResponse;
+}
+
 export function buildOllamaChatBody(args: {
   model: string;
   steps: ConversationStep[];
   tools: ToolDefinition[];
   stream: boolean;
   temperature?: number;
+  maxOutputTokens?: number;
 }) {
-  const { model, steps, tools, stream, temperature } = args;
+  const { model, steps, tools, stream, temperature, maxOutputTokens } = args;
+
+  const options: Record<string, unknown> = {};
+  if (temperature != null) options.temperature = temperature;
+  if (maxOutputTokens != null) options.num_predict = maxOutputTokens;
 
   return {
     model,
@@ -58,7 +99,7 @@ export function buildOllamaChatBody(args: {
         parameters: parseToolSchema(tool.inputSchema),
       },
     })),
-    ...(temperature != null ? { options: { temperature } } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
   };
 }
 
@@ -68,12 +109,13 @@ export async function streamOllamaResponse(args: {
   steps: ConversationStep[];
   tools: ToolDefinition[];
   temperature?: number;
+  maxOutputTokens?: number;
   onDelta: (steps: ConversationStep[]) => void;
   signal?: AbortSignal;
 }): Promise<ConversationStep[]> {
-  const { baseUrl = DEFAULT_OLLAMA_URL, model, steps, tools, temperature, onDelta, signal } = args;
+  const { baseUrl = DEFAULT_OLLAMA_URL, model, steps, tools, temperature, maxOutputTokens, onDelta, signal } = args;
 
-  const body = buildOllamaChatBody({ model, steps, tools, stream: true, temperature });
+  const body = buildOllamaChatBody({ model, steps, tools, stream: true, temperature, maxOutputTokens });
   const response = await fetch(`${baseUrl}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
