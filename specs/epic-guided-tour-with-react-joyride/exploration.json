@@ -1,0 +1,51 @@
+{
+  "project": {
+    "framework": "Next.js 15 + React 19",
+    "ui_library": "MUI 7",
+    "language": "TypeScript",
+    "test_frameworks": ["vitest (unit)", "playwright (e2e)"],
+    "test_command": "npm run test:unit",
+    "build_command": "npm run build"
+  },
+  "architecture": {
+    "main_component": "src/components/chat-workspace.tsx (~2600 LOC)",
+    "data_model": "src/lib/chat.ts",
+    "types": "src/types/chat.ts",
+    "layout": "Triple-column: left sidebar (320/44px) | center transcript+composer | right sidebar (360/44px)",
+    "app_bar_height": 65,
+    "sidebar_width": 320,
+    "sidebar_collapsed_width": 44,
+    "right_sidebar_width": 360
+  },
+  "state_management": {
+    "sidebar_state": "SidebarState persisted to localStorage via saveSidebarState/loadSidebarState",
+    "conversations": "Conversation[] persisted to localStorage via saveConversations/loadConversations",
+    "selected_id": "persisted via saveSelectedConversationId/loadSelectedConversationId",
+    "section_toggles": "toggleRightSection handles accordion-like model/temp/tokens/tools sections"
+  },
+  "existing_data_attributes": [
+    "data-step-kind (on StepCard Paper)",
+    "data-tool-id (on tool Paper cards)",
+    "data-composer-mode (on composer Box)"
+  ],
+  "key_functions": {
+    "createId": "generates UUID",
+    "createStep": "creates ConversationStep with defaults",
+    "createConversation": "creates Conversation with system step",
+    "updateSidebar": "patches SidebarState and persists",
+    "toggleRightSection": "accordion toggle for right sidebar sections"
+  },
+  "existing_test_baseline": {
+    "total_tests": 23,
+    "passing": 7,
+    "failing": 16,
+    "note": "Pre-existing failures, not caused by tour feature"
+  },
+  "mui_icons_available": "@mui/icons-material v7.0.2",
+  "theme": {
+    "primary_color": "#2457d6",
+    "border_radius": 18,
+    "font_family": "IBM Plex Sans",
+    "css_variables": true
+  }
+}

@@ -21,6 +21,7 @@ export interface SidebarState {
   toolsSectionOpen: boolean;
   clientSectionOpen: boolean;
   renderMarkdown: boolean;
+  showTour: boolean;
   /** Per-subsection collapse: key = "builtin" | "mcp-{serverName}" | provider name */
   subsections: Record<string, boolean>;
 }
@@ -34,6 +35,7 @@ const DEFAULT_SIDEBAR_STATE: SidebarState = {
   toolsSectionOpen: false,
   clientSectionOpen: false,
   renderMarkdown: true,
+  showTour: true,
   subsections: {},
 };
 

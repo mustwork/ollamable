@@ -1,0 +1,44 @@
+{
+  "questions": [
+    {
+      "id": "v1",
+      "question": "Does the AppBar element have data-tour=\"appbar\" and the model Chip have data-tour=\"model-chip\"?",
+      "expected": "Yes, both attributes are present on the respective elements."
+    },
+    {
+      "id": "v2",
+      "question": "Does the left sidebar Paper have data-tour=\"sidebar\", the collapse button have data-tour=\"sidebar-toggle\", and the New Chat stack have data-tour=\"new-chat\"?",
+      "expected": "Yes, all three attributes are present."
+    },
+    {
+      "id": "v3",
+      "question": "Is data-tour=\"conversation-card\" applied only to the first conversation card in the sidebar list?",
+      "expected": "Yes, only index === 0 gets the attribute via the spread pattern."
+    },
+    {
+      "id": "v4",
+      "question": "Does the Take Tour button appear at the bottom of the left sidebar with data-tour=\"take-tour\" and a TourOutlinedIcon?",
+      "expected": "Yes, a ListItemButton with mt:auto pushes it to the bottom, with the icon and 'Take Tour' label."
+    },
+    {
+      "id": "v5",
+      "question": "Do the step cards in the transcript receive data-tour attributes only on the first occurrence of each step kind?",
+      "expected": "Yes, the IIFE uses a seenKinds Set and tourMap to assign data-tour only once per kind."
+    },
+    {
+      "id": "v6",
+      "question": "Does the right sidebar have data-tour attributes on the sidebar Paper, models section, temperature section, max-tokens section, and tools section?",
+      "expected": "Yes: right-sidebar, models-section, temperature-section, max-tokens-section, tools-section are all present."
+    },
+    {
+      "id": "v7",
+      "question": "Is data-tour=\"tool-card\" applied to the very first tool Paper card across both builtin and MCP tool lists?",
+      "expected": "Yes, builtin tools use toolIdx === 0, and MCP tools track whether builtinTools already assigned it."
+    },
+    {
+      "id": "v8",
+      "question": "Does the Tools chip in the AppBar show the active tool count and open the right sidebar + tools section on click?",
+      "expected": "Yes, it renders when activeTools.length > 0 and calls updateSidebar with rightSidebarOpen and toolsSectionOpen."
+    }
+  ]
+}

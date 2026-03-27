@@ -1,0 +1,15 @@
+{
+  "status": "complete",
+  "summary": "Implemented tour data module with 28 Joyride steps and 2 example tour conversations. Installed react-joyride dependency. Added _tourExample flag to Conversation type.",
+  "files_changed": [
+    "package.json (added react-joyride dependency)",
+    "src/types/chat.ts (added _tourExample?: boolean to Conversation interface)",
+    "src/lib/tour-data.ts (new file: tourSteps, createTourConversations, localStorage key constants)",
+    "tests/unit/tour-data.test.ts (new file: 17 tests covering steps and conversations)"
+  ],
+  "tests": {
+    "new_tests": 17,
+    "all_passing": true,
+    "test_file": "tests/unit/tour-data.test.ts"
+  }
+}

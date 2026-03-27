@@ -1,0 +1,35 @@
+{
+  "story": "s2-data-tour-attrs",
+  "status": "completed",
+  "summary": "Added data-tour attributes to all tour-targeted elements and the Take Tour button",
+  "changes": {
+    "file": "src/components/chat-workspace.tsx",
+    "additions": [
+      "TourOutlinedIcon import",
+      "data-tour=\"appbar\" on AppBar",
+      "data-tour=\"model-chip\" on model Chip",
+      "Tools chip (data-tour=\"tools-chip\") in AppBar showing active tool count",
+      "ColorModeToggle wrapped in Box with data-tour=\"color-mode-toggle\"",
+      "data-tour=\"sidebar\" on left sidebar Paper",
+      "data-tour=\"sidebar-toggle\" on collapse IconButton",
+      "data-tour=\"new-chat\" on New Chat Stack",
+      "data-tour=\"conversation-card\" on first conversation Paper (index-based)",
+      "Take Tour ListItemButton (data-tour=\"take-tour\") at sidebar bottom with TourOutlinedIcon",
+      "data-tour=\"transcript\" on scroll container",
+      "data-tour=\"system-prompt\" on system prompt TextField",
+      "data-tour=\"composer\" on composer Box",
+      "First-occurrence data-tour on step cards (step-user, step-assistant, step-reasoning, step-tool-call, step-tool-result, step-meta)",
+      "dataTour prop added to StepCardProps interface and StepCard component",
+      "data-tour=\"right-sidebar\" on right sidebar Paper",
+      "data-tour=\"models-section\" on Models Box",
+      "dataTour prop added to SectionSearchField, data-tour=\"model-search\" on model search field",
+      "data-tour=\"model-filter-reasoning\" on reasoning-only Chip",
+      "data-tour=\"temperature-section\" on Temperature Box",
+      "data-tour=\"max-tokens-section\" on Max Output Tokens Box",
+      "data-tour=\"tools-section\" on Tools Box",
+      "data-tour=\"tool-search\" on tool search Stack",
+      "data-tour=\"tool-card\" on first tool Paper (tracked across builtin and MCP lists)"
+    ]
+  },
+  "typescript_check": "pass (no errors in chat-workspace.tsx; pre-existing test-file errors only)"
+}

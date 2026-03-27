@@ -1,0 +1,11 @@
+{
+  "questions": [
+    "Does tourSteps contain exactly 28 steps matching the spec's step sequence table?",
+    "Do all step targets use stable data-tour attribute selectors rather than class names?",
+    "Does createTourConversations produce conversation 1 with 6 steps (system, user, reasoning, assistant, user, assistant) and conversation 2 with 8 steps (system, user, meta, tool_call, meta, tool_result, reasoning, assistant)?",
+    "Are the TOUR_COMPLETED_KEY and TOUR_STEP_KEY constants exported with the correct localStorage key strings?",
+    "Does the _tourExample property exist on the Conversation type and is it set to true on both tour conversations?",
+    "Do assistant steps include usage metadata with inputTokens, outputTokens, and stopReason?",
+    "Does conversation 2 correctly activate the web_search tool ID when tools are provided?"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "questions": [
+    "Is the Joyride component rendered inside ChatWorkspace with correct props (steps, run, stepIndex, continuous, scrollToFirstStep, onEvent)?",
+    "Does the tour auto-start on first visit when ollamable.tourCompleted is not set in localStorage?",
+    "Does the tour NOT auto-start when ollamable.tourCompleted is 'true' in localStorage?",
+    "Does the handleJoyrideEvent callback correctly advance steps on STEP_AFTER events?",
+    "Are UI state side effects applied before the correct steps (e.g., switching conversations at step 15, opening right sidebar at step 18)?",
+    "Does the Take Tour button invoke handleStartTour which seeds conversations, resets step index, and starts the tour?",
+    "Are tour conversations cleaned up on finish if unmodified (same step count)?",
+    "Is the user's pre-tour sidebar state saved and restored after tour completion?"
+  ]
+}

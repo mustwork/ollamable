@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
 import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlined";
 import LightModeOutlinedIcon from "@mui/icons-material/LightModeOutlined";
-import { IconButton, Tooltip } from "@mui/material";
+import { IconButton } from "@mui/material";
 import { useColorScheme } from "@mui/material/styles";
 
 type ColorMode = "light" | "dark" | "system";
@@ -38,15 +38,13 @@ export function ColorModeToggle() {
   };
 
   return (
-    <Tooltip title={MODE_LABELS[value]}>
-      <IconButton
-        size="small"
-        onClick={handleClick}
-        aria-label={MODE_LABELS[value]}
-        sx={{ color: "text.secondary" }}
-      >
-        {MODE_ICONS[value]}
-      </IconButton>
-    </Tooltip>
+    <IconButton
+      size="small"
+      onClick={handleClick}
+      aria-label={MODE_LABELS[value]}
+      sx={{ color: "text.secondary" }}
+    >
+      {MODE_ICONS[value]}
+    </IconButton>
   );
 }

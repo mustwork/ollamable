@@ -75,6 +75,7 @@ export interface Conversation {
   availableTools: ToolDefinition[];
   activeToolIds: string[];
   steps: ConversationStep[];
+  _tourExample?: boolean;
 }
 
 export interface OllamaModel {

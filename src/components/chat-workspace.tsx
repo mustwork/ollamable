@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Joyride, ACTIONS, EVENTS, STATUS, type EventData } from "react-joyride";
 import Markdown from "react-markdown";
 import {
   Alert,
@@ -38,6 +39,7 @@ import { alpha, useTheme, type Theme } from "@mui/material/styles";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import GitHubIcon from "@mui/icons-material/GitHub";
 import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
@@ -47,6 +49,7 @@ import ReplayOutlinedIcon from "@mui/icons-material/ReplayOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
+import TourOutlinedIcon from "@mui/icons-material/TourOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
 import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
@@ -73,6 +76,12 @@ import {
 import { useWebSocket } from "@/src/lib/use-websocket";
 import { BackendClient, WS_URL } from "@/src/lib/backend-client";
 import { buildOpenAIRequestBody, toOpenAIMessages } from "@/shared/openai-format";
+import {
+  tourSteps,
+  createTourConversations,
+  TOUR_COMPLETED_KEY,
+  TOUR_STEP_KEY,
+} from "@/src/lib/tour-data";
 
 const SIDEBAR_WIDTH = 320;
 const APP_BAR_HEIGHT = 65;
@@ -83,6 +92,8 @@ const TEMPERATURE_OPTIONS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0];
 export function ChatWorkspace() {
   const theme = useTheme();
   const [models, setModels] = useState<OllamaModel[]>(fallbackModels);
+  const modelsRef = useRef<OllamaModel[]>(fallbackModels);
+  modelsRef.current = models;
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string>("");
@@ -126,6 +137,7 @@ export function ChatWorkspace() {
     toolsSectionOpen,
     clientSectionOpen,
     renderMarkdown,
+    showTour,
     subsections,
   } = sidebarState;
 
@@ -192,6 +204,250 @@ export function ChatWorkspace() {
   const previousSelectedConversationIdRef = useRef<string>("");
   const previousStepCountRef = useRef(0);
   const backendClientRef = useRef(new BackendClient());
+
+  // ── Tour state ──────────────────────────────────────────────────────
+  const [tourRun, setTourRun] = useState(false);
+  const [tourStepIndex, setTourStepIndex] = useState(0);
+  const tourConversationIdsRef = useRef<string[]>([]);
+  const preTourSidebarStateRef = useRef<SidebarState | null>(null);
+  const tourInitRef = useRef(false);
+
+  // Seed tour conversations and auto-start on first visit
+  useEffect(() => {
+    if (tourInitRef.current) return;
+    tourInitRef.current = true;
+
+    const completed = window.localStorage.getItem(TOUR_COMPLETED_KEY);
+    if (completed === "true") return;
+
+    // Defer tour on narrow viewports
+    if (window.innerWidth < 768) return;
+
+    // Wait for initial data to settle before starting tour
+    const timer = setTimeout(() => {
+      setConversations((current) => {
+        // Don't seed if tour conversations already exist (e.g. resume after refresh)
+        const existingTour = current.filter((c) => c._tourExample);
+        if (existingTour.length > 0) {
+          tourConversationIdsRef.current = existingTour.map((c) => c.id);
+          return current;
+        }
+
+        const model = current[0]?.model ?? fallbackModels[0].name;
+        const tourConvos = createTourConversations(model, tools);
+        tourConversationIdsRef.current = tourConvos.map((c) => c.id);
+        return [...tourConvos, ...current];
+      });
+
+      // Select first tour conversation
+      setConversations((current) => {
+        const firstTour = current.find((c) => c._tourExample);
+        if (firstTour) {
+          setSelectedConversationId(firstTour.id);
+        }
+        return current;
+      });
+
+      // Resume from saved step or start at 0
+      const savedStep = window.localStorage.getItem(TOUR_STEP_KEY);
+      const resumeIndex = savedStep ? parseInt(savedStep, 10) : 0;
+      setTourStepIndex(isNaN(resumeIndex) ? 0 : resumeIndex);
+      setTourRun(true);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleStartTour() {
+    if (window.innerWidth < 768) {
+      alert("For the best experience, please use a screen at least 768px wide.");
+      return;
+    }
+
+    // Save current sidebar state to restore after tour
+    preTourSidebarStateRef.current = { ...sidebarState };
+
+    window.localStorage.removeItem(TOUR_COMPLETED_KEY);
+
+    // Seed tour conversations if they don't already exist
+    const model = selectedConversation?.model ?? availableModels[0]?.name ?? fallbackModels[0].name;
+    setConversations((current) => {
+      const existingTour = current.filter((c) => c._tourExample);
+      if (existingTour.length > 0) {
+        tourConversationIdsRef.current = existingTour.map((c) => c.id);
+        const firstTour = existingTour[0];
+        setSelectedConversationId(firstTour.id);
+        return current;
+      }
+
+      const tourConvos = createTourConversations(model, tools);
+      tourConversationIdsRef.current = tourConvos.map((c) => c.id);
+      setSelectedConversationId(tourConvos[0].id);
+      return [...tourConvos, ...current];
+    });
+
+    // Ensure left sidebar is open for the first steps
+    updateSidebar({ sidebarOpen: true });
+
+    window.localStorage.removeItem(TOUR_STEP_KEY);
+    setTourStepIndex(0);
+    setTourRun(true);
+  }
+
+  function finishTour() {
+    // Stop the tour and dismiss backdrop immediately
+    setTourRun(false);
+    setTourStepIndex(0);
+    window.localStorage.setItem(TOUR_COMPLETED_KEY, "true");
+    window.localStorage.removeItem(TOUR_STEP_KEY);
+
+    // Remove all tour conversations (identified by _tourExample flag)
+    setConversations((current) => {
+      const remaining = current.filter((c) => !c._tourExample);
+
+      // Select first remaining conversation (preserves user's original chats)
+      setSelectedConversationId((currentId) => {
+        if (remaining.some((c) => c.id === currentId)) return currentId;
+        return remaining[0]?.id ?? "";
+      });
+
+      return remaining;
+    });
+
+    tourConversationIdsRef.current = [];
+
+    // Collapse both sidebars after tour
+    if (preTourSidebarStateRef.current) {
+      const restored = {
+        ...preTourSidebarStateRef.current,
+        sidebarOpen: false,
+        rightSidebarOpen: false,
+      };
+      setSidebarState(restored);
+      saveSidebarState(restored);
+      preTourSidebarStateRef.current = null;
+    } else {
+      updateSidebar({ sidebarOpen: false, rightSidebarOpen: false });
+    }
+  }
+
+  function applyTourStepSideEffects(nextIndex: number) {
+    // Indices 7-10: ensure right sidebar is open for all right sidebar steps
+    if (nextIndex >= 7 && nextIndex <= 10) {
+      const rightPatch: Partial<SidebarState> = { rightSidebarOpen: true };
+
+      if (nextIndex === 7) {
+        // Index 7 (Models): expand Models + open all provider subsections
+        // Use ref to avoid stale closure in memoized callback
+        const currentModels = modelsRef.current.filter((m) => !isEmbeddingModel(m));
+        const providerKeys: Record<string, boolean> = {};
+        for (const m of currentModels.length > 0 ? currentModels : fallbackModels) {
+          providerKeys[`model-${m.providerName ?? "Local"}`] = true;
+        }
+        setSidebarState((prev) => {
+          const next = {
+            ...prev,
+            ...rightPatch,
+            modelSectionOpen: true,
+            tempSectionOpen: false,
+            maxTokensSectionOpen: false,
+            toolsSectionOpen: false,
+            subsections: { ...prev.subsections, ...providerKeys },
+          };
+          saveSidebarState(next);
+          return next;
+        });
+      } else if (nextIndex === 8) {
+        // Index 8 (Temperature): collapse Models, expand Temperature
+        updateSidebar({ ...rightPatch, modelSectionOpen: false, tempSectionOpen: true, maxTokensSectionOpen: false, toolsSectionOpen: false });
+      } else if (nextIndex === 9) {
+        // Index 9 (Max Output Tokens): collapse Temperature, expand Max Tokens
+        updateSidebar({ ...rightPatch, modelSectionOpen: false, tempSectionOpen: false, maxTokensSectionOpen: true, toolsSectionOpen: false });
+      } else if (nextIndex === 10) {
+        // Index 10 (Tools): collapse Max Tokens, expand Tools + open builtin subsection + check web_search
+        setSidebarState((prev) => {
+          const next = {
+            ...prev,
+            ...rightPatch,
+            modelSectionOpen: false,
+            tempSectionOpen: false,
+            maxTokensSectionOpen: false,
+            toolsSectionOpen: true,
+            subsections: { ...prev.subsections, "tools-builtin": true },
+          };
+          saveSidebarState(next);
+          return next;
+        });
+        // Enable web_search tool after a brief delay so the user sees it toggle
+        setTimeout(() => {
+          const webSearchTool = tools.find((t) => t.name === "web_search");
+          if (webSearchTool && selectedConversation && !selectedConversation.activeToolIds.includes(webSearchTool.id)) {
+            updateConversation(selectedConversation.id, (c) => ({
+              ...c,
+              activeToolIds: [...c.activeToolIds, webSearchTool.id],
+              updatedAt: new Date().toISOString(),
+            }));
+          }
+        }, 800);
+      }
+    }
+
+  }
+
+  // Steps that trigger sidebar/section animations and need a delay before advancing
+  const STEPS_NEEDING_DELAY = new Set([7]);
+
+  const advanceToStep = useCallback((nextIndex: number) => {
+    setTourStepIndex(nextIndex);
+    window.localStorage.setItem(TOUR_STEP_KEY, String(nextIndex));
+  }, []);
+
+  const handleJoyrideEvent = useCallback(
+    (data: EventData) => {
+      const { action, index, status, type } = data;
+
+      if (
+        status === STATUS.FINISHED ||
+        status === STATUS.SKIPPED ||
+        action === ACTIONS.CLOSE
+      ) {
+        finishTour();
+        return;
+      }
+
+      // Skip past steps whose target element doesn't exist in the DOM
+      if (type === EVENTS.TARGET_NOT_FOUND) {
+        const nextIndex = index + 1;
+        if (nextIndex < tourSteps.length) {
+          advanceToStep(nextIndex);
+        }
+        return;
+      }
+
+      if (type === EVENTS.STEP_AFTER) {
+        const nextIndex =
+          action === ACTIONS.PREV ? index - 1 : index + 1;
+
+        // Past the last step — tour is done
+        if (nextIndex >= tourSteps.length) {
+          finishTour();
+          return;
+        }
+
+        if (nextIndex >= 0) {
+          applyTourStepSideEffects(nextIndex);
+
+          // Only delay for steps that trigger sidebar/section animations (350ms transition)
+          if (STEPS_NEEDING_DELAY.has(nextIndex)) {
+            setTimeout(() => advanceToStep(nextIndex), 400);
+          } else {
+            advanceToStep(nextIndex);
+          }
+        }
+      }
+    },
+    [advanceToStep] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const handleWsMessage = useCallback(
     (data: unknown) => {
@@ -978,7 +1234,38 @@ export function ChatWorkspace() {
         color: "text.primary",
       }}
     >
+      <Joyride
+        steps={tourSteps}
+        run={tourRun}
+        stepIndex={tourStepIndex}
+        continuous
+        scrollToFirstStep
+        onEvent={handleJoyrideEvent}
+        locale={{
+          back: "Back",
+          close: "Close",
+          last: "Finish",
+          next: "Next",
+          skip: "Skip tour",
+        }}
+        options={{
+          showProgress: true,
+          overlayClickAction: false,
+          primaryColor: "#2457d6",
+          textColor: "#333333",
+          backgroundColor: "#ffffff",
+          zIndex: 10000,
+          buttons: ["back", "close", "primary", "skip"],
+        }}
+        styles={{
+          tooltip: {
+            borderRadius: 18,
+            fontFamily: "'IBM Plex Sans', 'Segoe UI', sans-serif",
+          },
+        }}
+      />
       <AppBar
+        data-tour="appbar"
         position="sticky"
         color="transparent"
         elevation={0}
@@ -999,6 +1286,7 @@ export function ChatWorkspace() {
           </Box>
           {selectedConversation ? (
             <Chip
+              data-tour="model-chip"
               icon={<MemoryOutlinedIcon />}
               label={selectedConversation.model}
               color="primary"
@@ -1008,12 +1296,38 @@ export function ChatWorkspace() {
               size="small"
             />
           ) : null}
-          <ColorModeToggle />
+          {activeTools.length > 0 ? (
+            <Chip
+              data-tour="tools-chip"
+              icon={<HubOutlinedIcon />}
+              label={`${activeTools.length} tool${activeTools.length === 1 ? "" : "s"}`}
+              size="small"
+              clickable
+              onClick={() => {
+                updateSidebar({ rightSidebarOpen: true, toolsSectionOpen: true });
+              }}
+            />
+          ) : null}
+          <Box data-tour="color-mode-toggle">
+            <ColorModeToggle />
+          </Box>
+          <IconButton
+            size="small"
+            component="a"
+            href="https://github.com/mustwork/ollamable"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="GitHub repository"
+            sx={{ color: "text.secondary" }}
+          >
+            <GitHubIcon fontSize="small" />
+          </IconButton>
         </Toolbar>
       </AppBar>
 
       <Box sx={{ display: "flex", flexGrow: 1, minHeight: `calc(100dvh - ${APP_BAR_HEIGHT}px)`, overflow: "hidden" }}>
         <Paper
+          data-tour="sidebar"
           square
           onClick={sidebarOpen ? undefined : () => updateSidebar({ sidebarOpen: true })}
           sx={{
@@ -1059,6 +1373,7 @@ export function ChatWorkspace() {
                 Conversations
               </Typography>
               <IconButton
+                data-tour="sidebar-toggle"
                 size="small"
                 onClick={() => updateSidebar({ sidebarOpen: !sidebarOpen })}
                 aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
@@ -1067,7 +1382,7 @@ export function ChatWorkspace() {
                 <ViewSidebarOutlinedIcon />
               </IconButton>
             </Stack>
-            <Stack direction="row" alignItems="center">
+            <Stack data-tour="new-chat" direction="row" alignItems="center">
               <Typography
                 variant="overline"
                 color="text.secondary"
@@ -1088,6 +1403,29 @@ export function ChatWorkspace() {
                 <EditOutlinedIcon fontSize="small" />
               </IconButton>
             </Stack>
+            {showTour ? (
+              <Stack data-tour="take-tour" direction="row" alignItems="center">
+                <Typography
+                  variant="overline"
+                  color="text.secondary"
+                  sx={{
+                    flexGrow: 1,
+                    opacity: sidebarOpen ? 1 : 0,
+                    transition: "opacity 0.25s ease",
+                  }}
+                >
+                  Take Tour
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={handleStartTour}
+                  aria-label="Take tour"
+                  sx={{ color: "text.secondary" }}
+                >
+                  <TourOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            ) : null}
             <Box sx={{
               display: "flex",
               flexDirection: "column",
@@ -1099,10 +1437,11 @@ export function ChatWorkspace() {
               pointerEvents: sidebarOpen ? "auto" : "none",
             }}>
               <List sx={{ p: 0, overflowY: "auto", flexGrow: 1, scrollbarGutter: "stable", pr: 1 }}>
-            {conversations.filter((c) => c.steps.some((s) => s.kind === "user")).map((conversation) => (
+            {conversations.filter((c) => c.steps.some((s) => s.kind === "user")).map((conversation, index) => (
               <Paper
                 key={conversation.id}
                 variant="outlined"
+                {...(index === 0 ? { "data-tour": "conversation-card" } : {})}
                 sx={{
                   mb: 0.5,
                   p: 1.5,
@@ -1212,7 +1551,7 @@ export function ChatWorkspace() {
         >
           {selectedConversation ? (
             <>
-              <Box sx={{
+              <Box data-tour="transcript" sx={{
                 flexGrow: 1,
                 minHeight: 0,
                 width: "100%",
@@ -1228,6 +1567,7 @@ export function ChatWorkspace() {
                   {error ? <Alert severity="warning">{error}</Alert> : null}
 
                   <TextField
+                    data-tour="system-prompt"
                     label="System prompt"
                     InputLabelProps={{ shrink: true }}
                     multiline
@@ -1269,10 +1609,27 @@ export function ChatWorkspace() {
                       </StepCard>
                     ) : null}
 
-                    {visibleTranscriptSteps.map((step) => (
+                    {(() => {
+                      const seenKinds = new Set<string>();
+                      return visibleTranscriptSteps.map((step) => {
+                        let dataTour: string | undefined;
+                        if (!seenKinds.has(step.kind)) {
+                          seenKinds.add(step.kind);
+                          const tourMap: Record<string, string> = {
+                            user: "step-user",
+                            assistant: "step-assistant",
+                            reasoning: "step-reasoning",
+                            tool_call: "step-tool-call",
+                            tool_result: "step-tool-result",
+                            meta: "step-meta",
+                          };
+                          dataTour = tourMap[step.kind];
+                        }
+                        return (
                       <StepCard
                         key={step.id}
                         step={step}
+                        dataTour={dataTour}
                         expanded={Boolean(step.expanded)}
                         onToggle={() => handleToggleStep(step.id)}
                         onInspect={() => setInspectStep(step)}
@@ -1368,7 +1725,9 @@ export function ChatWorkspace() {
                           </Stack>
                         ) : null}
                       </StepCard>
-                    ))}
+                        );
+                      });
+                    })()}
                     {streaming ? (
                       <Paper
                         sx={{
@@ -1392,6 +1751,7 @@ export function ChatWorkspace() {
               </Box>
 
               <Box
+                data-tour="composer"
                 data-composer-mode={composerMode}
                 sx={{
                   flexShrink: 0,
@@ -1457,6 +1817,7 @@ export function ChatWorkspace() {
         </Box>
 
         <Paper
+          data-tour="right-sidebar"
           square
           onClick={rightSidebarOpen ? undefined : () => updateSidebar({ rightSidebarOpen: true })}
           sx={{
@@ -1522,7 +1883,7 @@ export function ChatWorkspace() {
                 pointerEvents: rightSidebarOpen ? "auto" : "none",
               }}>
                 <Stack spacing={0.5}>
-                  <Box>
+                  <Box data-tour="models-section">
                     <ListItemButton
                       onClick={() => toggleRightSection("modelSectionOpen")}
                       sx={{ mx: -2, px: 2, py: 0.5 }}
@@ -1533,9 +1894,10 @@ export function ChatWorkspace() {
                       {modelSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={modelSectionOpen}>
-                      <SectionSearchField value={modelSearch} onChange={setModelSearch} placeholder="Search models…" />
+                      <SectionSearchField value={modelSearch} onChange={setModelSearch} placeholder="Search models…" dataTour="model-search" />
                       <Stack direction="row" spacing={0.5} sx={{ mb: 0.5 }}>
                         <Chip
+                          data-tour="model-filter-reasoning"
                           label="reasoning only"
                           size="small"
                           variant={modelFilterReasoning ? "filled" : "outlined"}
@@ -1667,7 +2029,7 @@ export function ChatWorkspace() {
 
                   <Divider />
 
-                  <Box>
+                  <Box data-tour="temperature-section">
                     <ListItemButton
                       onClick={() => toggleRightSection("tempSectionOpen")}
                       sx={{ mx: -2, px: 2, py: 0.5 }}
@@ -1702,7 +2064,7 @@ export function ChatWorkspace() {
 
                   <Divider />
 
-                  <Box>
+                  <Box data-tour="max-tokens-section">
                     <ListItemButton
                       onClick={() => toggleRightSection("maxTokensSectionOpen")}
                       sx={{ mx: -2, px: 2, py: 0.5 }}
@@ -1738,7 +2100,7 @@ export function ChatWorkspace() {
 
                   <Divider />
 
-                  <Box>
+                  <Box data-tour="tools-section">
                     <ListItemButton
                       onClick={() => toggleRightSection("toolsSectionOpen")}
                       sx={{ mx: -2, px: 2, py: 0.5 }}
@@ -1749,7 +2111,7 @@ export function ChatWorkspace() {
                       {toolsSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={toolsSectionOpen}>
-                      <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                      <Stack data-tour="tool-search" spacing={0.5} sx={{ mt: 0.5 }}>
                         <SectionSearchField value={toolSearch} onChange={setToolSearch} placeholder="Search tools…" />
                         <Stack direction="row" spacing={0.5} sx={{ mb: 0.5 }}>
                           <Chip
@@ -1801,8 +2163,8 @@ export function ChatWorkspace() {
                           })()}
                           <Collapse in={hasToolFilter || isSubsectionOpen("tools-builtin")}>
                             <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                              {builtinTools.map((tool) => (
-                                <Paper key={tool.id} data-tool-id={tool.id} variant="outlined" sx={{ p: 1.5 }}>
+                              {builtinTools.map((tool, toolIdx) => (
+                                <Paper key={tool.id} data-tool-id={tool.id} {...(toolIdx === 0 ? { "data-tour": "tool-card" } : {})} variant="outlined" sx={{ p: 1.5 }}>
                                   <FormControlLabel
                                     control={
                                       <Checkbox
@@ -1830,7 +2192,9 @@ export function ChatWorkspace() {
                         </Box>
 
                         {/* ── MCP tools subsections (one per server) ── */}
-                        {Array.from(mcpServers.entries()).map(([serverName, serverTools]) => {
+                        {(() => {
+                          let toolCardAssigned = builtinTools.length > 0;
+                          return Array.from(mcpServers.entries()).map(([serverName, serverTools]) => {
                           const key = `tools-mcp-${serverName}`;
                           return (
                             <Box key={serverName}>
@@ -1856,8 +2220,11 @@ export function ChatWorkspace() {
                               })()}
                               <Collapse in={hasToolFilter || isSubsectionOpen(key)}>
                                 <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                                  {serverTools.map((tool) => (
-                                    <Paper key={tool.id} data-tool-id={tool.id} variant="outlined" sx={{ p: 1.5 }}>
+                                  {serverTools.map((tool) => {
+                                    const assignTourCard = !toolCardAssigned;
+                                    if (assignTourCard) toolCardAssigned = true;
+                                    return (
+                                    <Paper key={tool.id} data-tool-id={tool.id} {...(assignTourCard ? { "data-tour": "tool-card" } : {})} variant="outlined" sx={{ p: 1.5 }}>
                                       <FormControlLabel
                                         control={
                                           <Checkbox
@@ -1878,12 +2245,14 @@ export function ChatWorkspace() {
                                       />
                                       {renderToolSchema(tool)}
                                     </Paper>
-                                  ))}
+                                    );
+                                  })}
                                 </Stack>
                               </Collapse>
                             </Box>
                           );
-                        })}
+                        });
+                        })()}
                       </Stack>
                     </Collapse>
                   </Box>
@@ -1901,17 +2270,28 @@ export function ChatWorkspace() {
                       {clientSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={clientSectionOpen}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={renderMarkdown}
-                            onChange={() => updateSidebar({ renderMarkdown: !renderMarkdown })}
-                            size="small"
-                          />
-                        }
-                        label={<Typography variant="body2">Render markdown</Typography>}
-                        sx={{ mt: 0.5 }}
-                      />
+                      <Stack sx={{ mt: 0.5 }}>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={renderMarkdown}
+                              onChange={() => updateSidebar({ renderMarkdown: !renderMarkdown })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Render markdown</Typography>}
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={showTour}
+                              onChange={() => updateSidebar({ showTour: !showTour })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Show tour</Typography>}
+                        />
+                      </Stack>
                     </Collapse>
                   </Box>
                 </Stack>
@@ -2046,13 +2426,15 @@ export function ChatWorkspace() {
   );
 }
 
-function SectionSearchField({ value, onChange, placeholder }: {
+function SectionSearchField({ value, onChange, placeholder, dataTour }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  dataTour?: string;
 }) {
   return (
     <TextField
+      data-tour={dataTour}
       size="small"
       placeholder={placeholder ?? "Search…"}
       value={value}
@@ -2138,6 +2520,7 @@ interface StepCardProps {
   footerMeta?: React.ReactNode;
   footerActions?: React.ReactNode;
   children: React.ReactNode;
+  dataTour?: string;
 }
 
 function StepCard({
@@ -2149,11 +2532,13 @@ function StepCard({
   footerMeta,
   footerActions,
   children,
+  dataTour,
 }: StepCardProps) {
   const theme = useTheme();
   return (
     <Paper
       data-step-kind={step.kind}
+      data-tour={dataTour}
       sx={{
         overflow: "hidden",
         border: "1px solid",

@@ -1,0 +1,103 @@
+{
+  "stories": [
+    {
+      "id": "s1-tour-data",
+      "name": "Tour data module and dependency",
+      "status": "pending",
+      "story_order": 1,
+      "acceptance_criteria": ["AC-1", "AC-2", "AC-3", "AC-4", "AC-5", "AC-6", "AC-7", "AC-8"],
+      "scope": {
+        "in_scope": [
+          "Install react-joyride v3 dependency",
+          "Create src/lib/tour-data.ts with tourSteps array (28 Joyride Step objects)",
+          "Create src/lib/tour-data.ts with createTourConversations(model, tools) factory function",
+          "Export TOUR_COMPLETED_KEY and TOUR_STEP_KEY constants from src/lib/tour-data.ts",
+          "Add _tourExample?: boolean to Conversation interface in src/types/chat.ts",
+          "Create tests/unit/tour-data.test.ts with unit tests for tourSteps and createTourConversations"
+        ],
+        "out_of_scope": [
+          "Adding data-tour attributes to chat-workspace.tsx (Story 2)",
+          "Rendering <Joyride> in ChatWorkspace (Story 3)",
+          "Tour state management or callback handling (Story 3)",
+          "Take Tour button (Story 2)",
+          "localStorage persistence logic (Story 3)",
+          "Any changes to chat-workspace.tsx"
+        ]
+      },
+      "dependencies": []
+    },
+    {
+      "id": "s2-data-tour-attrs",
+      "name": "Data-tour attributes and Take Tour button",
+      "status": "pending",
+      "story_order": 2,
+      "acceptance_criteria": ["AC-9", "AC-10", "AC-11", "AC-12", "AC-13", "AC-14", "AC-15"],
+      "scope": {
+        "in_scope": [
+          "Add data-tour='appbar' to <AppBar>",
+          "Add data-tour='model-chip' to model <Chip>",
+          "Add tools-chip <Chip> with data-tour='tools-chip' in AppBar (when active tools exist)",
+          "Add data-tour='color-mode-toggle' to <ColorModeToggle> wrapper",
+          "Add data-tour='sidebar' to left sidebar <Paper>",
+          "Add data-tour='sidebar-toggle' to collapse <IconButton>",
+          "Add data-tour='new-chat' to New Chat <Stack>",
+          "Add data-tour='conversation-card' to first conversation <Paper>",
+          "Add data-tour='system-prompt' to system prompt <TextField>",
+          "Add data-tour='transcript' to transcript scroll container <Box>",
+          "Add data-tour='composer' to composer container <Box>",
+          "Add data-tour attributes to first StepCard of each kind (step-user, step-assistant, step-reasoning, step-tool-call, step-tool-result, step-meta)",
+          "Add dataTour prop to StepCard component to pass through data-tour attribute",
+          "Add data-tour='right-sidebar' to right sidebar <Paper>",
+          "Add data-tour='models-section' to Models section <Box>",
+          "Add data-tour='model-search' to model <SectionSearchField>",
+          "Add data-tour='model-filter-reasoning' to reasoning only <Chip>",
+          "Add data-tour='temperature-section' to Temperature section <Box>",
+          "Add data-tour='max-tokens-section' to Max Output Tokens section <Box>",
+          "Add data-tour='tools-section' to Tools section <Box>",
+          "Add data-tour='tool-search' to tool search + filter chips area",
+          "Add data-tour='tool-card' to first tool <Paper>",
+          "Add Take Tour <ListItemButton> with data-tour='take-tour' at bottom of left sidebar"
+        ],
+        "out_of_scope": [
+          "Creating tour-data.ts module (Story 1)",
+          "Rendering <Joyride> component (Story 3)",
+          "Tour state management or callbacks (Story 3)",
+          "Wiring handleStartTour to actual tour logic (Story 3, just add the onClick placeholder)",
+          "localStorage tour persistence (Story 3)"
+        ]
+      },
+      "dependencies": []
+    },
+    {
+      "id": "s3-joyride-integration",
+      "name": "Joyride integration and tour state",
+      "status": "pending",
+      "story_order": 3,
+      "acceptance_criteria": ["AC-16", "AC-17", "AC-18", "AC-19", "AC-20", "AC-21", "AC-22", "AC-23", "AC-24"],
+      "scope": {
+        "in_scope": [
+          "Import and render <Joyride> in ChatWorkspace with all config props from spec",
+          "Implement tour state (run, stepIndex, tourCompleted) in ChatWorkspace",
+          "Auto-start tour on first visit (ollamable.tourCompleted is falsy) after 500ms delay",
+          "Resume tour from ollamable.tourStep on page refresh",
+          "Implement handleJoyrideCallback with step orchestration (sidebar toggling, section expanding, conversation switching)",
+          "Seed tour conversations on tour start via createTourConversations",
+          "Clean up tour conversations on tour finish/skip (remove if unmodified)",
+          "Wire Take Tour button onClick to handleStartTour",
+          "Save/restore sidebar state around tour lifecycle",
+          "Persist stepIndex to localStorage on step change",
+          "Responsive: defer auto-trigger on viewports < 768px",
+          "Responsive: show message on narrow viewport when Take Tour clicked",
+          "Verify all existing tests pass, no TypeScript errors"
+        ],
+        "out_of_scope": [
+          "E2E / Playwright tests (future story)",
+          "Tooltip theming beyond spec (glassmorphism, animated GIFs)",
+          "Modifying tour step content or adding new steps beyond spec's 28"
+        ]
+      },
+      "dependencies": ["s1-tour-data", "s2-data-tour-attrs"]
+    }
+  ],
+  "story_order": ["s1-tour-data", "s2-data-tour-attrs", "s3-joyride-integration"]
+}
