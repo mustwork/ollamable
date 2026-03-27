@@ -51,7 +51,7 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
 import TourOutlinedIcon from "@mui/icons-material/TourOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
-import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ToolDefinition } from "@/src/types/chat";
+import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
 import {
   createConversation,
@@ -1149,6 +1149,7 @@ export function ChatWorkspace() {
       result,
       undefined,
       {
+        id: pendingToolCall.toolCall?.id,
         name: pendingToolCall.toolCall?.name ?? "tool",
       }
     );
@@ -2663,28 +2664,55 @@ function getStepBackgroundColor(
   }
 }
 
-function getPendingToolCallStep(conversation: Conversation) {
-  const resolvedToolCallIds = new Set<string>();
-  for (const step of conversation.steps) {
-    if (step.kind === "tool_result" && step.toolResult) {
-      resolvedToolCallIds.add(step.toolResult.name + ":" + step.id);
+function hasMatchingToolResult(
+  tc: ToolCallPayload,
+  steps: ConversationStep[],
+  afterIndex: number,
+): boolean {
+  for (let i = afterIndex + 1; i < steps.length; i++) {
+    const s = steps[i];
+    if (s.kind !== "tool_result" || !s.toolResult) continue;
+    // Match by call ID when both sides have one (handles duplicate tool names)
+    if (tc.id && s.toolResult.id) {
+      if (s.toolResult.id === tc.id) return true;
+    } else {
+      // Fall back to name matching when IDs aren't available (e.g. Ollama)
+      if (s.toolResult.name === tc.name) return true;
     }
   }
+  return false;
+}
 
-  // Walk backward to find the most recent unresolved tool_call
+function getPendingToolCallStep(conversation: Conversation): ConversationStep | null {
+  // Walk backward to find the most recent unresolved tool call
   for (let index = conversation.steps.length - 1; index >= 0; index -= 1) {
     const step = conversation.steps[index];
     if (step.kind === "user") {
       // Stop at the last user message — tool_calls before it belong to a prior turn
       return null;
     }
+
+    // Check standalone tool_call steps
     if (step.kind === "tool_call" && step.toolCall) {
-      // Check if this tool_call has a matching tool_result after it
-      const hasResult = conversation.steps
-        .slice(index + 1)
-        .some((s) => s.kind === "tool_result" && s.toolResult?.name === step.toolCall!.name);
-      if (!hasResult) {
+      if (!hasMatchingToolResult(step.toolCall, conversation.steps, index)) {
         return step;
+      }
+    }
+
+    // Check merged toolCalls[] on assistant steps (backend merges tool calls here)
+    if (step.kind === "assistant" && step.toolCalls?.length) {
+      for (const tc of step.toolCalls) {
+        if (!hasMatchingToolResult(tc, conversation.steps, index)) {
+          return {
+            id: step.id,
+            kind: "tool_call",
+            title: `Tool Call: ${tc.name}`,
+            content: JSON.stringify(tc.arguments, null, 2),
+            createdAt: step.createdAt,
+            expanded: true,
+            toolCall: tc,
+          };
+        }
       }
     }
   }
