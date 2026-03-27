@@ -143,13 +143,30 @@ export class ConnectionHandler {
           },
         });
 
-        // Check if any response steps are tool calls that we can execute
+        // Separate tool_call steps from other response steps
         const toolCallSteps = responseSteps.filter(
           (s) => s.kind === "tool_call" && s.toolCall
         );
-        const nonToolSteps = responseSteps.filter(
+        const mergedSteps = responseSteps.filter(
           (s) => s.kind !== "tool_call"
         );
+
+        // Merge tool calls into the assistant step as toolCalls[]
+        if (toolCallSteps.length > 0) {
+          let assistantStep = mergedSteps.find((s) => s.kind === "assistant");
+          if (!assistantStep) {
+            assistantStep = {
+              id: randomUUID(),
+              kind: "assistant",
+              title: "Assistant",
+              content: "",
+              createdAt: new Date().toISOString(),
+              expanded: true,
+            };
+            mergedSteps.push(assistantStep);
+          }
+          assistantStep.toolCalls = toolCallSteps.map((s) => s.toolCall!);
+        }
 
         const executableToolCalls = toolCallSteps.filter(
           (s) => s.toolCall && this.dispatcher.canHandle(s.toolCall.name)
@@ -162,8 +179,7 @@ export class ConnectionHandler {
 
         if (executableToolCalls.length === 0) {
           // No executable tool calls — we're done.
-          // Send ALL new steps accumulated during the loop, not just the final response.
-          const allNewSteps = [...steps.slice(originalCount), ...responseSteps];
+          const allNewSteps = [...steps.slice(originalCount), ...mergedSteps];
           console.log(`[ws] conversation=${conversationId} done after ${loopIteration} loop(s), returning ${allNewSteps.length} new step(s)`);
           this.send({
             type: "chat.done",
@@ -173,7 +189,14 @@ export class ConnectionHandler {
           break;
         }
 
-        // Execute tools and build tool result steps
+        // Send merged assistant (with toolCalls) to frontend
+        this.send({
+          type: "chat.steps",
+          conversationId,
+          steps: mergedSteps,
+        });
+
+        // Execute tools, emitting harness steps for each
         const toolResultSteps: ConversationStep[] = [];
 
         for (const toolStep of executableToolCalls) {
@@ -183,13 +206,18 @@ export class ConnectionHandler {
 
           console.log(`[ws] conversation=${conversationId} tool.exec ${name} args=${truncatedArgs}`);
 
-          this.sendMeta(conversationId, {
-            id: randomUUID(),
-            kind: "mcp_call",
-            title: "Tool Dispatch",
-            detail: `Executing tool: ${name}`,
-            data: { tool: name, arguments: toolArgs },
-            timestamp: new Date().toISOString(),
+          // Harness: dispatching tool
+          this.send({
+            type: "chat.steps",
+            conversationId,
+            steps: [{
+              id: randomUUID(),
+              kind: "harness",
+              title: `Executing: ${name}`,
+              content: JSON.stringify(toolArgs, null, 2),
+              createdAt: new Date().toISOString(),
+              expanded: true,
+            }],
           });
 
           const startTime = Date.now();
@@ -203,7 +231,21 @@ export class ConnectionHandler {
 
           console.log(`[ws] conversation=${conversationId} tool.done ${name} ${durationMs}ms result=${truncatedResult}`);
 
-          toolResultSteps.push({
+          // Harness: execution result
+          this.send({
+            type: "chat.steps",
+            conversationId,
+            steps: [{
+              id: randomUUID(),
+              kind: "harness",
+              title: `Result: ${name} (${durationMs}ms)`,
+              content: result,
+              createdAt: new Date().toISOString(),
+              expanded: true,
+            }],
+          });
+
+          const toolResultStep: ConversationStep = {
             id: randomUUID(),
             kind: "tool_result",
             title: `Result: ${name}`,
@@ -211,17 +253,19 @@ export class ConnectionHandler {
             createdAt: new Date().toISOString(),
             expanded: true,
             toolResult: { id: toolStep.toolCall!.id, name },
-          });
+          };
+          toolResultSteps.push(toolResultStep);
         }
 
-        // Append tool calls + results to steps and loop back to Ollama
-        steps = [
-          ...steps,
-          ...toolCallSteps,
-          ...toolResultSteps,
-          // Include any non-tool response steps (assistant text, reasoning)
-          ...nonToolSteps,
-        ];
+        // Send tool results (response back to LLM) to frontend
+        this.send({
+          type: "chat.steps",
+          conversationId,
+          steps: toolResultSteps,
+        });
+
+        // Append merged steps + tool results for next LLM iteration
+        steps = [...steps, ...mergedSteps, ...toolResultSteps];
       }
     } catch (error) {
       if (controller.signal.aborted) {

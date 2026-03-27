@@ -23,6 +23,7 @@ export type StepKind =
   | "reasoning"
   | "tool_call"
   | "tool_result"
+  | "harness"
   | "meta";
 
 export interface UsagePayload {
@@ -39,6 +40,7 @@ export interface ConversationStep {
   createdAt: string;
   expanded?: boolean;
   toolCall?: ToolCallPayload;
+  toolCalls?: ToolCallPayload[];
   toolResult?: ToolResultPayload;
   metaEvent?: MetaEventPayload;
   usage?: UsagePayload;
@@ -87,6 +89,7 @@ export type ClientMessage =
 // Server → Client messages
 export type ServerMessage =
   | { type: "chat.delta"; conversationId: string; steps: ConversationStep[] }
+  | { type: "chat.steps"; conversationId: string; steps: ConversationStep[] }
   | { type: "chat.done"; conversationId: string; steps: ConversationStep[] }
   | { type: "chat.error"; conversationId: string; message: string }
   | { type: "meta.event"; conversationId: string; event: MetaEvent }

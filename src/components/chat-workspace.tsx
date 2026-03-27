@@ -34,19 +34,18 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha, useTheme, type Theme } from "@mui/material/styles";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
-import EditIcon from "@mui/icons-material/Edit";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import CloudIcon from "@mui/icons-material/Cloud";
+import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
+import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
+import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
-import MemoryIcon from "@mui/icons-material/Memory";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import ReplayIcon from "@mui/icons-material/Replay";
-import SearchIcon from "@mui/icons-material/Search";
-import StopIcon from "@mui/icons-material/Stop";
-import SyncIcon from "@mui/icons-material/Sync";
+import MemoryOutlinedIcon from "@mui/icons-material/MemoryOutlined";
+import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
+import ReplayOutlinedIcon from "@mui/icons-material/ReplayOutlined";
+import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
 import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
@@ -72,6 +71,7 @@ import {
 } from "@/src/lib/ollama";
 import { useWebSocket } from "@/src/lib/use-websocket";
 import { BackendClient, WS_URL } from "@/src/lib/backend-client";
+import { buildOpenAIRequestBody, toOpenAIMessages } from "@/shared/openai-format";
 
 const SIDEBAR_WIDTH = 320;
 const APP_BAR_HEIGHT = 65;
@@ -90,6 +90,7 @@ export function ChatWorkspace() {
   const [toolFilterActive, setToolFilterActive] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [modelFilterReasoning, setModelFilterReasoning] = useState(false);
+  const [modelFilterNonReasoning, setModelFilterNonReasoning] = useState(false);
   const [sidebarState, setSidebarState] = useState<SidebarState>({
     sidebarOpen: true,
     rightSidebarOpen: false,
@@ -170,9 +171,6 @@ export function ChatWorkspace() {
   const [error, setError] = useState<string>("");
   const [modelMetaOpen, setModelMetaOpen] = useState(false);
   const [requestJsonOpen, setRequestJsonOpen] = useState(false);
-  const [requestJsonCopyState, setRequestJsonCopyState] = useState<"idle" | "copied" | "error">(
-    "idle"
-  );
   const [modelMetaLoading, setModelMetaLoading] = useState(false);
   const [modelMetaError, setModelMetaError] = useState("");
   const [modelMeta, setModelMeta] = useState<OllamaModelMeta | null>(null);
@@ -181,10 +179,12 @@ export function ChatWorkspace() {
   const [titleDraft, setTitleDraft] = useState("");
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [stepDraft, setStepDraft] = useState("");
+  const [inspectStep, setInspectStep] = useState<ConversationStep | null>(null);
+  const [toolsCardExpanded, setToolsCardExpanded] = useState(false);
   const stopStreamRef = useRef<(() => void) | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const previousSelectedConversationIdRef = useRef<string>("");
-  const previousHasStreamingStepsRef = useRef(false);
+  const previousStepCountRef = useRef(0);
   const backendClientRef = useRef(new BackendClient());
 
   const handleWsMessage = useCallback(
@@ -343,16 +343,13 @@ export function ChatWorkspace() {
     }
 
     return JSON.stringify(
-      {
-        type: "chat.send",
-        conversationId: selectedConversation.id,
+      buildOpenAIRequestBody({
         model: selectedConversation.model,
-        provider: selectedConversation.provider,
         steps: selectedConversation.steps,
         tools: activeTools,
         temperature: selectedConversation.temperature,
         maxOutputTokens: selectedConversation.maxOutputTokens,
-      },
+      }),
       null,
       2
     );
@@ -370,26 +367,19 @@ export function ChatWorkspace() {
   }, [selectedConversationId]);
 
   useEffect(() => {
-    if (!requestJsonOpen && requestJsonCopyState !== "idle") {
-      setRequestJsonCopyState("idle");
-    }
-  }, [requestJsonCopyState, requestJsonOpen]);
-
-  useEffect(() => {
     const currentConversationId = selectedConversation?.id ?? "";
-    const hasStreamingSteps =
-      selectedConversation?.steps.some((step) => step.id.startsWith("stream-")) ?? false;
-    const selectedConversationChanged =
+    const stepCount = selectedConversation?.steps.length ?? 0;
+    const conversationChanged =
       previousSelectedConversationIdRef.current !== currentConversationId;
-    const streamingStarted = hasStreamingSteps && !previousHasStreamingStepsRef.current;
+    const newStepAdded = stepCount > previousStepCountRef.current;
 
-    if (selectedConversationChanged || streamingStarted) {
+    if (conversationChanged || newStepAdded) {
       transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
 
     previousSelectedConversationIdRef.current = currentConversationId;
-    previousHasStreamingStepsRef.current = hasStreamingSteps;
-  }, [selectedConversationId, selectedConversation?.steps]);
+    previousStepCountRef.current = stepCount;
+  }, [selectedConversationId, selectedConversation?.steps.length]);
 
   useEffect(() => {
     if (!selectedConversation || availableModels.length === 0) {
@@ -617,6 +607,18 @@ export function ChatWorkspace() {
     });
   }
 
+  function applyStableSteps(conversationId: string, newSteps: ConversationStep[]) {
+    updateConversation(conversationId, (conversation) => {
+      // Remove streaming steps, append new stable steps
+      const stableSteps = conversation.steps.filter((s) => !s.id.startsWith("stream-"));
+      return {
+        ...conversation,
+        steps: [...stableSteps, ...newSteps.map((s) => ({ ...s, expanded: true }))],
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
   function applyMetaEvent(conversationId: string, metaStep: ConversationStep) {
     updateConversation(conversationId, (conversation) => {
       // Insert meta step before streaming steps so it appears above the current stream
@@ -673,20 +675,23 @@ export function ChatWorkspace() {
       temperature: nextConversation.temperature,
       maxOutputTokens: nextConversation.maxOutputTokens,
       onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
+      onStableSteps: (stableSteps) => applyStableSteps(nextConversation.id, stableSteps),
       onMetaEvent: (metaStep) => applyMetaEvent(nextConversation.id, metaStep),
     });
     stopStreamRef.current = stop;
 
     try {
       const responseSteps = await promise;
-      updateConversation(nextConversation.id, (conversation) => ({
-        ...conversation,
-        steps: [
-          ...conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-          ...responseSteps,
-        ],
-        updatedAt: new Date().toISOString(),
-      }));
+      updateConversation(nextConversation.id, (conversation) => {
+        const stableSteps = conversation.steps.filter((step) => !step.id.startsWith("stream-"));
+        const existingIds = new Set(stableSteps.map((s) => s.id));
+        const newSteps = responseSteps.filter((s) => !existingIds.has(s.id));
+        return {
+          ...conversation,
+          steps: [...stableSteps, ...newSteps],
+          updatedAt: new Date().toISOString(),
+        };
+      });
     } catch (streamError) {
       const isAbort =
         streamError instanceof Error && streamError.message === "AbortError";
@@ -907,14 +912,6 @@ export function ChatWorkspace() {
     stopStreamRef.current?.();
   }
 
-  async function handleCopyRequestJson() {
-    try {
-      await copyTextToClipboard(requestJsonPreview);
-      setRequestJsonCopyState("copied");
-    } catch {
-      setRequestJsonCopyState("error");
-    }
-  }
 
   const selectedModel = selectedConversation
     ? modelSelectKey(selectedConversation.provider, selectedConversation.model)
@@ -970,21 +967,13 @@ export function ChatWorkspace() {
           </Box>
           {selectedConversation ? (
             <Chip
-              icon={<MemoryIcon />}
+              icon={<MemoryOutlinedIcon />}
               label={selectedConversation.model}
               color="primary"
               clickable
               onClick={() => void handleOpenModelMeta()}
               aria-label={`Open metadata for ${selectedConversation.model}`}
               size="small"
-            />
-          ) : null}
-          {activeTools.length > 0 ? (
-            <Chip
-              label={`${activeTools.length} ${activeTools.length === 1 ? "Tool" : "Tools"}`}
-              size="small"
-              color="secondary"
-              onClick={() => updateSidebar({ rightSidebarOpen: true })}
             />
           ) : null}
           <ColorModeToggle />
@@ -1064,7 +1053,7 @@ export function ChatWorkspace() {
                 aria-label="New chat"
                 sx={{ color: "text.secondary" }}
               >
-                <EditIcon fontSize="small" />
+                <EditOutlinedIcon fontSize="small" />
               </IconButton>
             </Stack>
             <Box sx={{
@@ -1096,16 +1085,15 @@ export function ChatWorkspace() {
                     : {}),
                 }}
                 onClick={() => setSelectedConversationId(conversation.id)}
-                onDoubleClick={() => handleStartTitleEdit(conversation)}
               >
                 <IconButton
                   className="conversation-actions"
                   size="small"
                   onClick={(e) => { e.stopPropagation(); setRequestJsonOpen(true); }}
-                  aria-label="Copy request JSON"
+                  aria-label="View request JSON"
                   sx={{ position: "absolute", top: 4, right: 4, opacity: 0, transition: "opacity 0.15s ease" }}
                 >
-                  <ContentCopyIcon sx={{ fontSize: 14 }} />
+                  <VisibilityOutlinedIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   className="conversation-actions"
@@ -1114,10 +1102,10 @@ export function ChatWorkspace() {
                   aria-label={`Delete conversation ${conversation.title}`}
                   sx={{ position: "absolute", bottom: 4, right: 4, opacity: 0, transition: "opacity 0.15s ease" }}
                 >
-                  <DeleteOutlineIcon sx={{ fontSize: 14 }} />
+                  <DeleteOutlinedIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 {editingConversationId === conversation.id ? (
-                  <TextField
+                  <input
                     value={titleDraft}
                     onChange={(event) => setTitleDraft(event.target.value)}
                     onBlur={() => handleSaveTitle(conversation.id)}
@@ -1133,26 +1121,43 @@ export function ChatWorkspace() {
                     }}
                     onClick={(event) => event.stopPropagation()}
                     autoFocus
-                    fullWidth
-                    size="small"
-                    variant="standard"
-                    inputProps={{ style: { fontWeight: 600 } }}
+                    style={{
+                      font: "inherit",
+                      fontSize: "0.875rem",
+                      fontWeight: 600,
+                      lineHeight: 1.43,
+                      letterSpacing: "0.01071em",
+                      color: "inherit",
+                      background: "none",
+                      border: "none",
+                      outline: "none",
+                      padding: 0,
+                      margin: 0,
+                      width: "100%",
+                      boxSizing: "border-box",
+                      height: "1.25rem",
+                    }}
                   />
                 ) : (
-                  <ListItemText
-                    primary={conversation.title}
-                    secondary={(() => {
-                      const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
-                      const tools = conversation.steps.filter((s) => s.kind === "tool_call").length;
-                      const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
-                      const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
-                      const tokens = input + output;
-                      return <>{msgs} messages • {tools} tool uses<br />{tokens > 0 ? <>{tokens.toLocaleString()} tokens<br /></> : null}{formatTimestamp(conversation.updatedAt)}</>;
-                    })()}
-                    primaryTypographyProps={{ fontWeight: 600 }}
-                    secondaryTypographyProps={{ sx: { mt: 0.5 } }}
-                  />
+                  <Typography
+                    variant="body2"
+                    fontWeight={600}
+                    onClick={(e) => { e.stopPropagation(); handleStartTitleEdit(conversation); }}
+                    sx={{ cursor: "text" }}
+                  >
+                    {conversation.title}
+                  </Typography>
                 )}
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                  {(() => {
+                    const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
+                    const tools = conversation.steps.filter((s) => s.kind === "tool_call").length;
+                    const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
+                    const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
+                    const tokens = input + output;
+                    return <>{msgs} messages • {tools} tool uses<br />{tokens > 0 ? <>{tokens.toLocaleString()} tokens<br /></> : null}{formatTimestamp(conversation.updatedAt)}</>;
+                  })()}
+                </Typography>
               </Paper>
             ))}
           </List>
@@ -1185,8 +1190,8 @@ export function ChatWorkspace() {
                 overflowY: "auto",
                 px: 2,
                 scrollbarGutter: "stable",
-                maskImage: "linear-gradient(to bottom, transparent, black 6px, black calc(100% - 6px), transparent)",
-                WebkitMaskImage: "linear-gradient(to bottom, transparent, black 6px, black calc(100% - 6px), transparent)",
+                maskImage: "linear-gradient(to bottom, transparent, black 2px, black calc(100% - 6px), transparent)",
+                WebkitMaskImage: "linear-gradient(to bottom, transparent, black 2px, black calc(100% - 6px), transparent)",
               }}>
                 <Stack spacing={2} sx={{ pt: 1, pb: 1, maxWidth: sidebarOpen && rightSidebarOpen ? 900 : 700, mx: "auto", transition: "max-width 0.35s ease" }}>
                   {error ? <Alert severity="warning">{error}</Alert> : null}
@@ -1203,166 +1208,147 @@ export function ChatWorkspace() {
                     sx={{ width: "100%" }}
                   />
 
-                  <Stack spacing={2}>
-                    {visibleTranscriptSteps.map((step) => (
-                        <Paper
-                          key={step.id}
-                          data-step-kind={step.kind}
-                          sx={{
-                            overflow: "hidden",
-                            border: "1px solid",
-                            borderColor: "divider",
-                            backgroundColor: getStepBackgroundColor(step.kind, theme),
-                          }}
-                        >
-                          <ListItemButton onClick={() => handleToggleStep(step.id)}>
-                            {step.kind === "meta" ? (
-                              <Box sx={{ mr: 1.5, display: "flex", color: "#00bcd4" }}>
-                                {getMetaEventIcon(step.metaEvent?.kind)}
-                              </Box>
-                            ) : null}
-                            <ListItemText
-                              primary={formatStepSecondary(step)}
-                              primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
-                            />
-                            {step.expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                          </ListItemButton>
-                          <Collapse in={Boolean(step.expanded)}>
-                            <Divider />
-                            <Box sx={{ p: 2.5 }}>
-                              {step.toolCall ? (
-                                <Paper
-                                  variant="outlined"
-                                  sx={{
-                                    p: 2,
-                                    mb: 2,
-                                    backgroundColor: "var(--surface-inset)",
-                                  }}
-                                >
-                                  <Typography variant="overline" color="secondary.main">
-                                    Tool Payload
-                                  </Typography>
-                                  <Typography variant="body2" sx={{ mt: 1, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-                                    {JSON.stringify(step.toolCall, null, 2)}
-                                  </Typography>
-                                </Paper>
-                              ) : null}
-                              {step.toolResult ? (
-                                <Paper
-                                  variant="outlined"
-                                  sx={{
-                                    p: 2,
-                                    mb: 2,
-                                    backgroundColor: "var(--surface-inset)",
-                                  }}
-                                >
-                                  <Typography variant="overline" color="secondary.main">
-                                    Tool Name
-                                  </Typography>
-                                  <Typography variant="body2" sx={{ mt: 1, fontFamily: "monospace" }}>
-                                    {step.toolResult.name}
-                                  </Typography>
-                                </Paper>
-                              ) : null}
-                              {step.metaEvent?.data ? (
-                                <Paper
-                                  variant="outlined"
-                                  sx={{
-                                    p: 2,
-                                    mb: 2,
-                                    backgroundColor: "var(--surface-inset)",
-                                    borderColor: alpha("#00bcd4", 0.3),
-                                  }}
-                                >
-                                  <Typography variant="overline" sx={{ color: "#00bcd4" }}>
-                                    Server Event Data
-                                  </Typography>
-                                  <Typography variant="body2" sx={{ mt: 1, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-                                    {JSON.stringify(step.metaEvent.data, null, 2)}
-                                  </Typography>
-                                </Paper>
-                              ) : null}
-                              {editingStepId === step.id ? (
-                                <Stack spacing={1.5}>
-                                  <TextField
-                                    label="Edit message"
-                                    multiline
-                                    minRows={3}
-                                    value={stepDraft}
-                                    onChange={(event) => setStepDraft(event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter" && !event.shiftKey) {
-                                        event.preventDefault();
-                                        void handleSaveStepEdit(step.id);
-                                      }
-                                      if (event.key === "Escape") {
-                                        event.preventDefault();
-                                        handleCancelStepEdit();
-                                      }
-                                    }}
-                                    autoFocus
-                                  />
-                                  <Stack direction="row" spacing={1} justifyContent="flex-end">
-                                    <Button variant="text" color="inherit" onClick={handleCancelStepEdit}>
-                                      Abort
-                                    </Button>
-                                    <Button variant="contained" onClick={() => void handleSaveStepEdit(step.id)}>
-                                      Send
-                                    </Button>
-                                  </Stack>
-                                </Stack>
-                              ) : (
-                                <Typography
-                                  variant="body1"
-                                  sx={{
-                                    whiteSpace: "pre-wrap",
-                                    lineHeight: 1.7,
-                                    color: "text.primary",
-                                  }}
-                                >
-                                  {step.content}
-                                </Typography>
-                              )}
-                              {(step.kind === "user" || step.kind === "assistant") ? (
-                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" sx={{ mt: 1 }}>
-                                  {step.kind === "user" ? (
-                                    <>
-                                      <IconButton
-                                        aria-label={`Edit message ${step.content}`}
-                                        size="small"
-                                        onClick={() => handleStartStepEdit(step)}
-                                        disabled={streaming}
-                                      >
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                      <IconButton
-                                        aria-label={`Resend message ${step.content}`}
-                                        size="small"
-                                        onClick={() => void handleResendUserStep(step.id)}
-                                        disabled={streaming}
-                                      >
-                                        <ReplayIcon fontSize="small" />
-                                      </IconButton>
-                                    </>
-                                  ) : null}
-                                  {step.kind === "assistant" ? (
-                                    <IconButton
-                                      aria-label={`Regenerate response ${step.content}`}
-                                      size="small"
-                                      onClick={() => void handleRegenerateAssistantStep(step.id)}
-                                      disabled={streaming}
-                                    >
-                                      <ReplayIcon fontSize="small" />
-                                    </IconButton>
-                                  ) : null}
-                                </Stack>
-                              ) : null}
+                    {activeTools.length > 0 ? (
+                      <StepCard
+                        step={{ id: "tools-card", kind: "system", title: "Tools", content: "", createdAt: selectedConversation.createdAt }}
+                        expanded={toolsCardExpanded}
+                        onToggle={() => setToolsCardExpanded((v) => !v)}
+                        onInspect={() => {
+                          const toolsJson = activeTools.map((t) => {
+                            let parameters: unknown;
+                            try { parameters = JSON.parse(t.inputSchema); } catch { parameters = t.inputSchema; }
+                            return { type: "function", function: { name: t.name, description: t.description, parameters } };
+                          });
+                          setInspectStep({
+                            id: "tools-card", kind: "system", title: "Tools",
+                            content: JSON.stringify(toolsJson, null, 2),
+                            createdAt: selectedConversation.createdAt,
+                          });
+                        }}
+                        headerLabel={`tools (${activeTools.length})`}
+                      >
+                        <Stack spacing={1}>
+                          {activeTools.map((tool) => (
+                            <Box key={tool.id}>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>{tool.name}</Typography>
+                              <Typography variant="body2" color="text.secondary">{tool.description}</Typography>
                             </Box>
-                          </Collapse>
-                        </Paper>
-                      ))}
+                          ))}
+                        </Stack>
+                      </StepCard>
+                    ) : null}
+
+                    {visibleTranscriptSteps.map((step) => (
+                      <StepCard
+                        key={step.id}
+                        step={step}
+                        expanded={Boolean(step.expanded)}
+                        onToggle={() => handleToggleStep(step.id)}
+                        onInspect={() => setInspectStep(step)}
+                        headerLabel={formatStepHeader(step)}
+                        footerMeta={formatStepFooterMeta(step)}
+                        footerActions={
+                          step.kind === "user" ? (
+                            <>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleStartStepEdit(step)}
+                                disabled={streaming}
+                                aria-label="Edit message"
+                              >
+                                <EditOutlinedIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                onClick={() => void handleResendUserStep(step.id)}
+                                disabled={streaming}
+                                aria-label="Resend message"
+                              >
+                                <ReplayOutlinedIcon fontSize="small" />
+                              </IconButton>
+                            </>
+                          ) : step.kind === "assistant" ? (
+                            <IconButton
+                              size="small"
+                              onClick={() => void handleRegenerateAssistantStep(step.id)}
+                              disabled={streaming}
+                              aria-label="Regenerate response"
+                            >
+                              <ReplayOutlinedIcon fontSize="small" />
+                            </IconButton>
+                          ) : undefined
+                        }
+                      >
+                        {step.metaEvent?.data ? (
+                          <Typography variant="body2" sx={{ mb: 1, fontFamily: "monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
+                            {JSON.stringify(step.metaEvent.data, null, 2)}
+                          </Typography>
+                        ) : null}
+                        {editingStepId === step.id ? (
+                          <Stack spacing={1.5}>
+                            <TextField
+                              label="Edit message"
+                              multiline
+                              minRows={3}
+                              value={stepDraft}
+                              onChange={(event) => setStepDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" && !event.shiftKey) {
+                                  event.preventDefault();
+                                  void handleSaveStepEdit(step.id);
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  handleCancelStepEdit();
+                                }
+                              }}
+                              autoFocus
+                            />
+                            <Stack direction="row" spacing={1} justifyContent="flex-end">
+                              <Button variant="text" color="inherit" onClick={handleCancelStepEdit}>Abort</Button>
+                              <Button variant="contained" onClick={() => void handleSaveStepEdit(step.id)}>Send</Button>
+                            </Stack>
+                          </Stack>
+                        ) : (
+                          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, color: "text.primary" }}>
+                            {(step.kind === "user" || step.kind === "assistant") ? step.content.replace(/^\n+|\n+$/g, "") : step.content}
+                          </Typography>
+                        )}
+                        {step.toolCalls && step.toolCalls.length > 0 ? (
+                          <Stack spacing={1.5} sx={{ mt: step.content.trim() ? 2 : 0 }}>
+                            {step.toolCalls.map((tc, i) => (
+                              <Box key={tc.id ?? i}>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                                  Tool Call Request: {tc.name}
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontFamily: "monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
+                                  {JSON.stringify(tc.arguments, null, 2)}
+                                </Typography>
+                              </Box>
+                            ))}
+                          </Stack>
+                        ) : null}
+                      </StepCard>
+                    ))}
+                    {streaming ? (
+                      <Paper
+                        sx={{
+                          p: 3,
+                          border: "1px solid",
+                          borderColor: "divider",
+                          backgroundColor: "var(--surface-card)",
+                          filter: "blur(2px)",
+                          opacity: 0.5,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          minHeight: 80,
+                        }}
+                      >
+                        <CircularProgress size={24} />
+                      </Paper>
+                    ) : null}
                     <Box ref={transcriptEndRef} aria-hidden="true" />
-                  </Stack>
                 </Stack>
               </Box>
 
@@ -1383,11 +1369,6 @@ export function ChatWorkspace() {
                   transition: "max-width 0.35s ease",
                 }}>
 
-                {pendingToolCall?.toolCall ? (
-                  <Alert severity="info" sx={{ mb: 1 }}>
-                    {`Provide the result for ${pendingToolCall.toolCall.name} before sending another prompt.`}
-                  </Alert>
-                ) : null}
                 <TextField
                   label={composerLabel}
                   InputLabelProps={{ shrink: true }}
@@ -1412,21 +1393,24 @@ export function ChatWorkspace() {
                       overflowY: "auto",
                     },
                   }}
+                  slotProps={{
+                    input: {
+                      endAdornment: streaming ? (
+                        <InputAdornment position="end" sx={{ alignSelf: "flex-end", mb: 1 }}>
+                          <IconButton
+                            color="secondary"
+                            onClick={handleStop}
+                            aria-label="Stop"
+                            size="small"
+                          >
+                            <StopOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
+                  }}
                   fullWidth
                 />
-                {streaming ? (
-                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-                    <CircularProgress size={18} />
-                    <IconButton
-                      color="secondary"
-                      onClick={handleStop}
-                      aria-label="Stop"
-                      size="small"
-                    >
-                      <StopIcon />
-                    </IconButton>
-                  </Stack>
-                ) : null}
                 </Box>
               </Box>
             </>
@@ -1507,18 +1491,26 @@ export function ChatWorkspace() {
                       <Typography variant="overline" color="text.secondary" sx={{ flexGrow: 1 }}>
                         Models
                       </Typography>
-                      {modelSectionOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                      {modelSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={modelSectionOpen}>
                       <SectionSearchField value={modelSearch} onChange={setModelSearch} placeholder="Search models…" />
                       <Stack direction="row" spacing={0.5} sx={{ mb: 0.5 }}>
                         <Chip
-                          label="show reasoning only"
+                          label="reasoning only"
                           size="small"
                           variant={modelFilterReasoning ? "filled" : "outlined"}
                           color={modelFilterReasoning ? "primary" : "default"}
                           clickable
-                          onClick={() => setModelFilterReasoning((prev) => !prev)}
+                          onClick={() => { setModelFilterReasoning((prev) => !prev); setModelFilterNonReasoning(false); }}
+                        />
+                        <Chip
+                          label="non-reasoning only"
+                          size="small"
+                          variant={modelFilterNonReasoning ? "filled" : "outlined"}
+                          color={modelFilterNonReasoning ? "primary" : "default"}
+                          clickable
+                          onClick={() => { setModelFilterNonReasoning((prev) => !prev); setModelFilterReasoning(false); }}
                         />
                       </Stack>
                       <List dense sx={{ p: 0, mt: 0.5 }}>
@@ -1527,6 +1519,7 @@ export function ChatWorkspace() {
                           const filtered = availableModels.filter((m) => {
                             if (modelSearchLower && !m.name.toLowerCase().includes(modelSearchLower)) return false;
                             if (modelFilterReasoning && !isReasoningModel(m)) return false;
+                            if (modelFilterNonReasoning && isReasoningModel(m)) return false;
                             return true;
                           });
                           const providers = new Map<string, OllamaModel[]>();
@@ -1539,7 +1532,7 @@ export function ChatWorkspace() {
                           const items: React.ReactNode[] = [];
                           for (const [providerName, group] of providers) {
                             const subsectionKey = `model-${providerName}`;
-                            const hasModelFilter = modelFilterReasoning || Boolean(modelSearchLower);
+                            const hasModelFilter = modelFilterReasoning || modelFilterNonReasoning || Boolean(modelSearchLower);
                             const open = hasModelFilter || isSubsectionOpen(subsectionKey);
                             if (providers.size > 1) {
                               const hasSelectedModel = group.some(
@@ -1559,7 +1552,7 @@ export function ChatWorkspace() {
                                   <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
                                     {group.length}
                                   </Typography>
-                                  {open ? <ExpandLessIcon sx={{ fontSize: 14 }} /> : <ExpandMoreIcon sx={{ fontSize: 14 }} />}
+                                  {open ? <ExpandLessOutlinedIcon sx={{ fontSize: 14 }} /> : <ExpandMoreOutlinedIcon sx={{ fontSize: 14 }} />}
                                 </ListItemButton>
                               );
                               items.push(
@@ -1587,7 +1580,7 @@ export function ChatWorkspace() {
                                             }}
                                             aria-label="Model info"
                                           >
-                                            <MemoryIcon fontSize="small" />
+                                            <MemoryOutlinedIcon fontSize="small" />
                                           </IconButton>
                                         ) : null}
                                       </ListItemButton>
@@ -1619,7 +1612,7 @@ export function ChatWorkspace() {
                                         }}
                                         aria-label="Model info"
                                       >
-                                        <MemoryIcon fontSize="small" />
+                                        <MemoryOutlinedIcon fontSize="small" />
                                       </IconButton>
                                     ) : null}
                                   </ListItemButton>
@@ -1646,7 +1639,7 @@ export function ChatWorkspace() {
                       <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
                         {selectedTemperature != null ? selectedTemperature.toFixed(1) : ""}
                       </Typography>
-                      {tempSectionOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                      {tempSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={tempSectionOpen}>
                       <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
@@ -1681,7 +1674,7 @@ export function ChatWorkspace() {
                       <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
                         {selectedConversation.maxOutputTokens ?? ""}
                       </Typography>
-                      {maxTokensSectionOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                      {maxTokensSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={maxTokensSectionOpen}>
                       <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
@@ -1714,7 +1707,7 @@ export function ChatWorkspace() {
                       <Typography variant="overline" color="text.secondary" sx={{ flexGrow: 1 }}>
                         Tools
                       </Typography>
-                      {toolsSectionOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                      {toolsSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
                     </ListItemButton>
                     <Collapse in={toolsSectionOpen}>
                       <Stack spacing={0.5} sx={{ mt: 0.5 }}>
@@ -1748,19 +1741,25 @@ export function ChatWorkspace() {
                         {/* ── Built-in tools subsection ── */}
                         {/* Force-expand subsections when a filter or search is active */}
                         <Box>
-                          <ListItemButton
-                            onClick={() => toggleSubsection("tools-builtin")}
-                            sx={{ mx: -1, px: 1, py: 0.25, borderRadius: 1 }}
-                          >
-                            <ListItemText
-                              primary="built-in"
-                              primaryTypographyProps={{ variant: "caption", color: "text.secondary", fontWeight: 600 }}
-                            />
-                            <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
-                              {builtinTools.length}
-                            </Typography>
-                            {(hasToolFilter || isSubsectionOpen("tools-builtin")) ? <ExpandLessIcon sx={{ fontSize: 14 }} /> : <ExpandMoreIcon sx={{ fontSize: 14 }} />}
-                          </ListItemButton>
+                          {(() => {
+                            const hasActiveTool = builtinTools.some((t) => selectedConversation.activeToolIds.includes(t.id));
+                            return (
+                              <ListItemButton
+                                onClick={() => toggleSubsection("tools-builtin")}
+                                selected={hasActiveTool}
+                                sx={{ px: 1, py: 0.25, borderRadius: 1 }}
+                              >
+                                <ListItemText
+                                  primary="built-in"
+                                  primaryTypographyProps={{ variant: "caption", color: hasActiveTool ? "primary" : "text.secondary", fontWeight: 600 }}
+                                />
+                                <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+                                  {builtinTools.length}
+                                </Typography>
+                                {(hasToolFilter || isSubsectionOpen("tools-builtin")) ? <ExpandLessOutlinedIcon sx={{ fontSize: 14 }} /> : <ExpandMoreOutlinedIcon sx={{ fontSize: 14 }} />}
+                              </ListItemButton>
+                            );
+                          })()}
                           <Collapse in={hasToolFilter || isSubsectionOpen("tools-builtin")}>
                             <Stack spacing={0.5} sx={{ mt: 0.5 }}>
                               {builtinTools.map((tool) => (
@@ -1796,20 +1795,26 @@ export function ChatWorkspace() {
                           const key = `tools-mcp-${serverName}`;
                           return (
                             <Box key={serverName}>
-                              <ListItemButton
-                                onClick={() => toggleSubsection(key)}
-                                sx={{ mx: -1, px: 1, py: 0.25, borderRadius: 1 }}
-                              >
-                                <HubOutlinedIcon sx={{ fontSize: 14, mr: 0.5, color: "text.secondary" }} />
-                                <ListItemText
-                                  primary={serverName}
-                                  primaryTypographyProps={{ variant: "caption", color: "text.secondary", fontWeight: 600 }}
-                                />
-                                <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
-                                  {serverTools.length}
-                                </Typography>
-                                {(hasToolFilter || isSubsectionOpen(key)) ? <ExpandLessIcon sx={{ fontSize: 14 }} /> : <ExpandMoreIcon sx={{ fontSize: 14 }} />}
-                              </ListItemButton>
+                              {(() => {
+                                const hasActiveTool = serverTools.some((t) => selectedConversation.activeToolIds.includes(t.id));
+                                return (
+                                  <ListItemButton
+                                    onClick={() => toggleSubsection(key)}
+                                    selected={hasActiveTool}
+                                    sx={{ px: 1, py: 0.25, borderRadius: 1 }}
+                                  >
+                                    <HubOutlinedIcon sx={{ fontSize: 14, mr: 0.5, color: hasActiveTool ? "primary.main" : "text.secondary" }} />
+                                    <ListItemText
+                                      primary={serverName}
+                                      primaryTypographyProps={{ variant: "caption", color: hasActiveTool ? "primary" : "text.secondary", fontWeight: 600 }}
+                                    />
+                                    <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+                                      {serverTools.length}
+                                    </Typography>
+                                    {(hasToolFilter || isSubsectionOpen(key)) ? <ExpandLessOutlinedIcon sx={{ fontSize: 14 }} /> : <ExpandMoreOutlinedIcon sx={{ fontSize: 14 }} />}
+                                  </ListItemButton>
+                                );
+                              })()}
                               <Collapse in={hasToolFilter || isSubsectionOpen(key)}>
                                 <Stack spacing={0.5} sx={{ mt: 0.5 }}>
                                   {serverTools.map((tool) => (
@@ -1951,42 +1956,26 @@ export function ChatWorkspace() {
         </DialogActions>
       </Dialog>
 
-      <Dialog
+      <JsonPreviewDialog
         open={requestJsonOpen}
         onClose={() => setRequestJsonOpen(false)}
-        fullWidth
-        maxWidth="md"
-      >
-        <DialogTitle>Request JSON</DialogTitle>
-        <DialogContent dividers>
-          {requestJsonCopyState === "copied" ? (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              JSON copied to clipboard.
-            </Alert>
-          ) : null}
-          {requestJsonCopyState === "error" ? (
-            <Alert severity="warning" sx={{ mb: 2 }}>
-              Failed to copy JSON to clipboard.
-            </Alert>
-          ) : null}
-          <Typography
-            component="pre"
-            variant="body2"
-            sx={{
-              m: 0,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontFamily: "monospace",
-            }}
-          >
-            {requestJsonPreview}
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => void handleCopyRequestJson()}>Copy</Button>
-          <Button onClick={() => setRequestJsonOpen(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
+        title="Request JSON"
+        subtitle="OpenAI-compatible format"
+        json={requestJsonPreview}
+      />
+
+      <JsonPreviewDialog
+        open={inspectStep != null}
+        onClose={() => setInspectStep(null)}
+        title={inspectStep ? (inspectStep.id === "tools-card" ? "tools" : inspectStep.kind.replace("_", " ")) : ""}
+        subtitle="OpenAI-compatible format"
+        json={inspectStep ? (() => {
+          if (inspectStep.id === "tools-card") return inspectStep.content;
+          const msgs = toOpenAIMessages([inspectStep]);
+          if (msgs.length === 0) return "(not sent to LLM)";
+          return JSON.stringify(msgs.length === 1 ? msgs[0] : msgs, null, 2);
+        })() : ""}
+      />
     </Box>
   );
 }
@@ -2006,7 +1995,7 @@ function SectionSearchField({ value, onChange, placeholder }: {
         input: {
           startAdornment: (
             <InputAdornment position="start">
-              <SearchIcon sx={{ fontSize: 14 }} />
+              <SearchOutlinedIcon sx={{ fontSize: 14 }} />
             </InputAdornment>
           ),
           sx: { py: 0.25, px: 1, fontSize: "0.8rem" },
@@ -2066,26 +2055,116 @@ function isVisibleTranscriptStep(step: ConversationStep) {
     step.kind === "user" ||
     step.kind === "assistant" ||
     step.kind === "reasoning" ||
+    step.kind === "tool_result" ||
+    step.kind === "harness" ||
     step.kind === "meta"
   );
 }
 
-function formatStepSecondary(step: ConversationStep): string {
-  if (step.kind === "meta" && step.metaEvent?.durationMs != null) {
-    return `${step.metaEvent.kind.replace(/_/g, " ")} • ${step.metaEvent.durationMs}ms`;
-  }
+// ── Step Card ────────────────────────────────────────────────────────
 
-  const base = `${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`;
+interface StepCardProps {
+  step: ConversationStep;
+  expanded: boolean;
+  onToggle: () => void;
+  onInspect?: () => void;
+  headerLabel: string;
+  footerMeta?: React.ReactNode;
+  footerActions?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+function StepCard({
+  step,
+  expanded,
+  onToggle,
+  onInspect,
+  headerLabel,
+  footerMeta,
+  footerActions,
+  children,
+}: StepCardProps) {
+  const theme = useTheme();
+  return (
+    <Paper
+      data-step-kind={step.kind}
+      sx={{
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+        backgroundColor: getStepBackgroundColor(step.kind, theme),
+      }}
+    >
+      <ListItemButton onClick={onToggle}>
+        <ListItemText
+          primary={headerLabel}
+          primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
+        />
+        {onInspect ? (
+          <IconButton
+            size="small"
+            onClick={(e) => { e.stopPropagation(); onInspect(); }}
+            sx={{ mr: 0.5 }}
+            aria-label="Inspect OpenAI message"
+          >
+            <VisibilityOutlinedIcon fontSize="small" />
+          </IconButton>
+        ) : null}
+        {expanded ? <ExpandLessOutlinedIcon/> : <ExpandMoreOutlinedIcon/>}
+      </ListItemButton>
+      <Collapse in={expanded}>
+        <Box sx={{ p: 2.5 }}>
+          {children}
+          {(footerMeta || footerActions) ? (
+            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 1.5 }}>
+              <Typography variant="body2" color="text.secondary" component="div" sx={{ flexGrow: 1 }}>
+                {footerMeta}
+              </Typography>
+              {footerActions}
+            </Stack>
+          ) : null}
+        </Box>
+      </Collapse>
+    </Paper>
+  );
+}
+
+function formatStepHeader(step: ConversationStep): string {
+  if (step.kind === "tool_result" && step.toolResult) {
+    return `Tool Call Response: ${step.toolResult.name} • ${formatTimestamp(step.createdAt)}`;
+  }
+  if (step.kind === "harness") {
+    return `Harness • ${step.title} • ${formatTimestamp(step.createdAt)}`;
+  }
+  if (step.kind === "meta" && step.metaEvent) {
+    const kind = step.metaEvent.kind;
+    if (kind === "mcp_call") {
+      const tool = (step.metaEvent.data?.tool as string) ?? "";
+      return `Server Execution${tool ? `: ${tool}` : ""}`;
+    }
+    if (kind === "mcp_result") {
+      const tool = (step.metaEvent.data?.tool as string) ?? "";
+      return `Server Result${tool ? `: ${tool}` : ""}`;
+    }
+    return step.metaEvent.kind.replace(/_/g, " ");
+  }
+  return `${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`;
+}
+
+function formatStepFooterMeta(step: ConversationStep): string | null {
+  const parts: string[] = [];
+
+  if (step.kind === "meta" && step.metaEvent?.durationMs != null) {
+    parts.push(`${step.metaEvent.durationMs}ms`);
+  }
 
   if (step.usage) {
-    const parts: string[] = [];
-    if (step.usage.inputTokens != null) parts.push(`in: ${step.usage.inputTokens}`);
-    if (step.usage.outputTokens != null) parts.push(`out: ${step.usage.outputTokens}`);
+    if (step.usage.inputTokens != null) parts.push(`in: ${step.usage.inputTokens.toLocaleString()}`);
+    if (step.usage.outputTokens != null) parts.push(`out: ${step.usage.outputTokens.toLocaleString()}`);
     if (step.usage.stopReason) parts.push(`stop: ${step.usage.stopReason}`);
-    if (parts.length > 0) return `${base} • ${parts.join(" / ")}`;
   }
 
-  return base;
+  return parts.length > 0 ? parts.join(" / ") : null;
 }
 
 function getStepBackgroundColor(
@@ -2102,10 +2181,10 @@ function getStepBackgroundColor(
         return alpha(theme.palette.success.dark, 0.24);
       case "reasoning":
         return alpha(theme.palette.warning.dark, 0.2);
-      case "tool_call":
-        return alpha(theme.palette.secondary.dark, 0.18);
       case "tool_result":
         return alpha(theme.palette.error.dark, 0.22);
+      case "harness":
+        return alpha("#ff9800", 0.18);
       case "meta":
         return alpha("#00bcd4", 0.15);
       default:
@@ -2122,10 +2201,10 @@ function getStepBackgroundColor(
       return alpha(theme.palette.success.light, 0.2);
     case "reasoning":
       return alpha(theme.palette.warning.light, 0.22);
-    case "tool_call":
-      return alpha(theme.palette.secondary.light, 0.15);
     case "tool_result":
       return alpha(theme.palette.error.light, 0.18);
+    case "harness":
+      return alpha("#ff9800", 0.14);
     case "meta":
       return alpha("#00bcd4", 0.12);
     default:
@@ -2361,18 +2440,67 @@ function formatKeyValueSummary(modelMeta: OllamaModelMeta) {
   return entries.map(([key, value]) => `${key}: ${value}`).join("\n");
 }
 
-function getMetaEventIcon(kind?: string) {
-  switch (kind) {
-    case "mcp_connect":
-    case "mcp_call":
-    case "mcp_result":
-      return <SyncIcon fontSize="small" />;
-    case "search_start":
-    case "search_result":
-      return <SearchIcon fontSize="small" />;
-    default:
-      return <CloudIcon fontSize="small" />;
+
+function JsonPreviewDialog({ open, onClose, title, subtitle, json }: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle: string;
+  json: string;
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+
+  useEffect(() => {
+    if (!open && copyState !== "idle") setCopyState("idle");
+  }, [open, copyState]);
+
+  async function handleCopy() {
+    try {
+      await copyTextToClipboard(json);
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
   }
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <Box>
+          {title}
+          <Typography variant="subtitle2" color="text.secondary">
+            {subtitle}
+          </Typography>
+        </Box>
+        <IconButton
+          size="small"
+          onClick={() => void handleCopy()}
+          aria-label="Copy JSON"
+          sx={{ opacity: 0.5, "&:hover": { opacity: 1 }, transition: "opacity 0.15s ease" }}
+        >
+          <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent dividers>
+        {copyState === "copied" ? (
+          <Alert severity="success" sx={{ mb: 2 }}>JSON copied to clipboard.</Alert>
+        ) : null}
+        {copyState === "error" ? (
+          <Alert severity="warning" sx={{ mb: 2 }}>Failed to copy JSON to clipboard.</Alert>
+        ) : null}
+        <Typography
+          component="pre"
+          variant="body2"
+          sx={{ m: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace" }}
+        >
+          {json}
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
 }
 
 async function copyTextToClipboard(value: string) {

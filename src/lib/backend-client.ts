@@ -31,6 +31,7 @@ interface StreamRequest {
   temperature?: number;
   maxOutputTokens?: number;
   onDelta: (steps: ConversationStep[]) => void;
+  onStableSteps: (steps: ConversationStep[]) => void;
   onMetaEvent: (step: ConversationStep) => void;
 }
 
@@ -52,6 +53,10 @@ export class BackendClient {
 
     if (msg.type === "chat.delta" && msg.steps) {
       stream.request.onDelta(msg.steps);
+    }
+
+    if (msg.type === "chat.steps" && msg.steps) {
+      stream.request.onStableSteps(msg.steps);
     }
 
     if (msg.type === "chat.done" && msg.steps) {
