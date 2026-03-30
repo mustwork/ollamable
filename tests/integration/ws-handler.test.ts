@@ -343,12 +343,6 @@ describe("ConnectionHandler", () => {
       const metaEvents = messages.filter((m) => m.type === "meta.event");
       expect(metaEvents.length).toBeGreaterThanOrEqual(1);
 
-      // At least one meta event should mention the tool dispatch
-      const dispatchEvent = metaEvents.find(
-        (m) => (m.event as Record<string, unknown>)?.kind === "mcp_call"
-      );
-      expect(dispatchEvent).toBeDefined();
-
       // WebSearchExecutor emits search_start and search_result meta events
       const searchEvents = metaEvents.filter(
         (m) =>
@@ -357,14 +351,20 @@ describe("ConnectionHandler", () => {
       );
       expect(searchEvents.length).toBe(2);
 
-      // Final chat.done should include tool_call + tool_result + assistant steps
+      // Final chat.done should include assistant (with merged toolCalls) + tool_result + final assistant
       const done = messages.find((m) => m.type === "chat.done");
       expect(done).toBeDefined();
 
       const stepKinds = done!.steps!.map((s) => s.kind);
-      expect(stepKinds).toContain("tool_call");
       expect(stepKinds).toContain("tool_result");
       expect(stepKinds).toContain("assistant");
+
+      // Tool calls are merged into the assistant step's toolCalls array
+      const assistantWithTools = done!.steps!.find(
+        (s) => s.kind === "assistant" && s.toolCalls?.length
+      );
+      expect(assistantWithTools).toBeDefined();
+      expect(assistantWithTools!.toolCalls![0].name).toBe("web_search");
 
       // Tool result should contain search output
       const toolResult = done!.steps!.find((s) => s.kind === "tool_result");
@@ -407,12 +407,19 @@ describe("ConnectionHandler", () => {
       sendJson(ws, makeChatSend());
       await donePromise;
 
-      // The second call should include original steps + tool_call + tool_result
+      // The second call should include original steps + assistant (with toolCalls) + tool_result
       const kinds = secondCallSteps.map((s) => s.kind);
       expect(kinds).toContain("system");
       expect(kinds).toContain("user");
-      expect(kinds).toContain("tool_call");
+      expect(kinds).toContain("assistant");
       expect(kinds).toContain("tool_result");
+
+      // Tool calls are merged into the assistant step
+      const assistantWithTools = secondCallSteps.find(
+        (s) => s.kind === "assistant" && s.toolCalls?.length
+      );
+      expect(assistantWithTools).toBeDefined();
+      expect(assistantWithTools!.toolCalls![0].name).toBe("web_search");
     } finally {
       ws.close();
     }

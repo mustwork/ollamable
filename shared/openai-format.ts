@@ -71,7 +71,7 @@ export function toOpenAIMessages(steps: FormatStep[]) {
   const generatedIdsByName = new Map<string, string[]>();
 
   for (const step of steps) {
-    if (step.kind === "meta" || step.kind === "reasoning" || step.kind === "harness") continue;
+    if (step.kind === "meta" || step.kind === "reasoning") continue;
 
     if (step.kind === "system") {
       if (step.content.trim().length > 0) {

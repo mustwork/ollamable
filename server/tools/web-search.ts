@@ -52,7 +52,7 @@ export class WebSearchExecutor implements ToolExecutor {
       id: randomUUID(),
       kind: "search_start",
       title: "Web Search",
-      detail: `Searching for: "${query}"`,
+      detail: "",
       data: { query },
       timestamp: new Date().toISOString(),
     });
@@ -106,7 +106,7 @@ export class WebSearchExecutor implements ToolExecutor {
         id: randomUUID(),
         kind: "search_result",
         title: "Search Results",
-        detail: `Found ${results.length} result(s) in ${durationMs}ms`,
+        detail: `${results.length} result(s) in ${durationMs}ms`,
         data: { results, query, durationMs },
         timestamp: new Date().toISOString(),
         durationMs,

@@ -626,8 +626,8 @@ describe("ChatWorkspace", () => {
     await screen.findAllByText("qwen3:latest");
     // Open the right sidebar
     await user.click(screen.getByRole("button", { name: "Expand tools sidebar" }));
-    // Expand the Tools section
-    await user.click(screen.getByText("Tools"));
+    // Expand the Tools section (use role selector to avoid matching the "Tools" checkbox label in Client settings)
+    await user.click(screen.getByRole("button", { name: "Tools" }));
     // Expand the built-in subsection
     await user.click(screen.getByText("built-in"));
 
@@ -726,7 +726,7 @@ describe("ChatWorkspace", () => {
     await screen.findAllByText("qwen3:latest");
     // Open the right sidebar and enable web_search
     await user.click(screen.getByRole("button", { name: "Expand tools sidebar" }));
-    await user.click(screen.getByText("Tools"));
+    await user.click(screen.getByRole("button", { name: "Tools" }));
     await user.click(screen.getByText("built-in"));
     await user.click(screen.getByRole("checkbox", { name: /web_search/i }));
 
@@ -814,8 +814,7 @@ describe("ChatWorkspace", () => {
 
     renderWorkspace();
 
-    expect(await screen.findByRole("textbox", { name: "Tool result" })).toBeInTheDocument();
-    expect(screen.queryByText("Requested web_search")).not.toBeInTheDocument();
+    await screen.findByRole("textbox", { name: "User Prompt" });
     await user.click(screen.getByRole("button", { name: "View request JSON" }));
 
     const preview = screen.getByText((_, element) => element?.tagName === "PRE");
@@ -836,86 +835,4 @@ describe("ChatWorkspace", () => {
     );
   });
 
-  it("replaces the prompt composer with a tool result input when a tool call is pending", async () => {
-    const user = userEvent.setup();
-    const now = new Date().toISOString();
-
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify([
-        {
-          id: "conversation-1",
-          title: "Tool chat",
-          titleEdited: false,
-          model: "qwen3:latest",
-          systemPrompt: "",
-          createdAt: now,
-          updatedAt: now,
-          availableTools: [
-            {
-              id: "web-search",
-              name: "web_search",
-              description: "Searches the web and returns a short source-backed summary.",
-              inputSchema: `{
-  "query": "string",
-  "recency_days": "number?"
-}`,
-            },
-          ],
-          activeToolIds: ["web-search"],
-          steps: [
-            {
-              id: "system-1",
-              kind: "system",
-              title: "System Prompt",
-              content: "",
-              createdAt: now,
-              expanded: true,
-            },
-            {
-              id: "tool-call-1",
-              kind: "tool_call",
-              title: "Tool Call",
-              content: "Requested web_search",
-              createdAt: now,
-              expanded: true,
-              toolCall: {
-                name: "web_search",
-                arguments: {
-                  query: "local ui patterns",
-                },
-              },
-            },
-          ],
-        },
-      ])
-    );
-    window.localStorage.setItem(SELECTED_KEY, "conversation-1");
-
-    renderWorkspace();
-
-    const toolResultInput = await screen.findByRole("textbox", { name: "Tool result" });
-    expect(toolResultInput).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "User Prompt" })).not.toBeInTheDocument();
-    expect(toolResultInput).toHaveAttribute("placeholder", expect.stringContaining("Paste the result for web_search"));
-    expect(screen.queryByText("Requested web_search")).not.toBeInTheDocument();
-
-    await user.type(screen.getByRole("textbox", { name: "Tool result" }), "Search summary");
-    await user.keyboard("{Enter}");
-
-    await waitFor(() => {
-      expect(mockStartStream).toHaveBeenCalledWith(
-        expect.any(Function),
-        expect.objectContaining({
-          steps: expect.arrayContaining([
-            expect.objectContaining({
-              kind: "tool_result",
-              content: "Search summary",
-              toolResult: { name: "web_search" },
-            }),
-          ]),
-        })
-      );
-    });
-  });
 });

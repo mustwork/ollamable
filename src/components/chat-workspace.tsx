@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Joyride, ACTIONS, EVENTS, STATUS, type EventData } from "react-joyride";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Alert,
   AppBar,
@@ -156,12 +157,14 @@ export function ChatWorkspace() {
   const sidebarRef = useRef(sidebarState);
   sidebarRef.current = sidebarState;
 
-  const defaultExpanded = useCallback((kind: StepKind): boolean => {
+  const defaultExpanded = useCallback((step: ConversationStep): boolean => {
     const s = sidebarRef.current;
+    const kind = step.kind;
     if (kind === "reasoning" && s.collapseReasoning) return false;
     if (kind === "tool_call" && s.collapseTools) return false;
     if (kind === "tool_result" && s.collapseToolCalls) return false;
-    if ((kind === "harness" || kind === "meta") && s.collapseServerMessages) return false;
+    if (kind === "assistant" && step.toolCalls?.length && s.collapseToolCalls) return false;
+    if (kind === "meta" && s.collapseServerMessages) return false;
     return true;
   }, []);
 
@@ -223,6 +226,7 @@ export function ChatWorkspace() {
   const [stepDraft, setStepDraft] = useState("");
   const [inspectStep, setInspectStep] = useState<ConversationStep | null>(null);
   const [toolsCardExpanded, setToolsCardExpanded] = useState(false);
+  const [stoppedConversationId, setStoppedConversationId] = useState<string | null>(null);
   const stopStreamRef = useRef<(() => void) | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const previousSelectedConversationIdRef = useRef<string>("");
@@ -619,10 +623,6 @@ export function ChatWorkspace() {
     () => selectedConversation?.steps.filter(isVisibleTranscriptStep) ?? [],
     [selectedConversation]
   );
-  const pendingToolCall = useMemo(
-    () => (selectedConversation ? getPendingToolCallStep(selectedConversation) : null),
-    [selectedConversation]
-  );
   const requestJsonPreview = useMemo(() => {
     if (!selectedConversation) {
       return "";
@@ -639,7 +639,7 @@ export function ChatWorkspace() {
       null,
       2
     );
-  }, [activeTools, composerValue, pendingToolCall, selectedConversation]);
+  }, [activeTools, composerValue, selectedConversation]);
 
   useEffect(() => {
     if (!selectedConversation && conversations.length > 0) {
@@ -882,7 +882,7 @@ export function ChatWorkspace() {
       const nextStreamingSteps = partialSteps.map((step) => ({
         ...step,
         id: `stream-${step.id}`,
-        expanded: defaultExpanded(step.kind),
+        expanded: defaultExpanded(step),
       }));
 
       return {
@@ -895,11 +895,13 @@ export function ChatWorkspace() {
 
   function applyStableSteps(conversationId: string, newSteps: ConversationStep[]) {
     updateConversation(conversationId, (conversation) => {
-      // Remove streaming steps, append new stable steps
+      // Remove streaming steps, then upsert new stable steps by ID
       const stableSteps = conversation.steps.filter((s) => !s.id.startsWith("stream-"));
+      const newStepIds = new Set(newSteps.map((s) => s.id));
+      const existing = stableSteps.filter((s) => !newStepIds.has(s.id));
       return {
         ...conversation,
-        steps: [...stableSteps, ...newSteps.map((s) => ({ ...s, expanded: defaultExpanded(s.kind) }))],
+        steps: [...existing, ...newSteps.map((s) => ({ ...s, expanded: defaultExpanded(s) }))],
         updatedAt: new Date().toISOString(),
       };
     });
@@ -911,7 +913,7 @@ export function ChatWorkspace() {
       const streamingIdx = conversation.steps.findIndex((s) => s.id.startsWith("stream-"));
       const insertIdx = streamingIdx === -1 ? conversation.steps.length : streamingIdx;
       const nextSteps = [...conversation.steps];
-      nextSteps.splice(insertIdx, 0, { ...metaStep, expanded: defaultExpanded(metaStep.kind) });
+      nextSteps.splice(insertIdx, 0, { ...metaStep, expanded: defaultExpanded(metaStep) });
       return {
         ...conversation,
         steps: nextSteps,
@@ -926,6 +928,7 @@ export function ChatWorkspace() {
   ) {
     setError("");
     setStreaming(true);
+    setStoppedConversationId(null);
 
     const activeTools = nextConversation.availableTools.filter((tool) =>
       nextConversation.activeToolIds.includes(tool.id)
@@ -973,7 +976,7 @@ export function ChatWorkspace() {
         const existingIds = new Set(stableSteps.map((s) => s.id));
         const newSteps = responseSteps
           .filter((s) => !existingIds.has(s.id))
-          .map((s) => ({ ...s, expanded: defaultExpanded(s.kind) }));
+          .map((s) => ({ ...s, expanded: defaultExpanded(s) }));
         return {
           ...conversation,
           steps: [...stableSteps, ...newSteps],
@@ -987,11 +990,17 @@ export function ChatWorkspace() {
         ? "Generation stopped."
         : "Failed to stream from backend.";
       setError(message);
-      updateConversation(nextConversation.id, (conversation) => ({
-        ...conversation,
-        steps: conversation.steps.filter((step) => !step.id.startsWith("stream-")),
-        updatedAt: new Date().toISOString(),
-      }));
+      updateConversation(nextConversation.id, (conversation) => {
+        const cleanedSteps = conversation.steps.filter((step) => !step.id.startsWith("stream-"));
+        return {
+          ...conversation,
+          steps: cleanedSteps,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      if (isAbort) {
+        setStoppedConversationId(nextConversation.id);
+      }
     } finally {
       stopStreamRef.current = null;
       setStreaming(false);
@@ -1141,7 +1150,7 @@ export function ChatWorkspace() {
   }
 
   async function handleSendPrompt() {
-    if (!selectedConversation || !composerValue.trim() || streaming || pendingToolCall) {
+    if (!selectedConversation || !composerValue.trim() || streaming) {
       return;
     }
 
@@ -1163,42 +1172,14 @@ export function ChatWorkspace() {
     await streamConversationResponse(nextConversation);
   }
 
-  async function handleSendToolResult() {
-    if (!selectedConversation || !pendingToolCall || !composerValue.trim() || streaming) {
-      return;
-    }
-
-    const result = composerValue.trim();
-    const toolResultStep = createStep(
-      "tool_result",
-      "Tool Result",
-      result,
-      undefined,
-      {
-        id: pendingToolCall.toolCall?.id,
-        name: pendingToolCall.toolCall?.name ?? "tool",
-      }
-    );
-
-    setComposerValue("");
-
-    updateConversation(selectedConversation.id, (conversation) => ({
-      ...conversation,
-      steps: [...conversation.steps, toolResultStep],
-      updatedAt: new Date().toISOString(),
-    }));
-
-    const nextConversation = {
-      ...selectedConversation,
-      steps: [...selectedConversation.steps, toolResultStep],
-    };
-
-    // Reuse streamConversationResponse so tool results go through the backend
-    await streamConversationResponse(nextConversation);
-  }
-
   function handleStop() {
     stopStreamRef.current?.();
+  }
+
+  async function handleResume() {
+    if (!selectedConversation || streaming) return;
+    setStoppedConversationId(null);
+    await streamConversationResponse(selectedConversation);
   }
 
   function navigateToTool(toolId: string) {
@@ -1242,12 +1223,17 @@ export function ChatWorkspace() {
       )
     : false;
 
-  const composerMode = pendingToolCall ? "tool_result" : "prompt";
-  const composerLabel = composerMode === "tool_result" ? "Tool result" : "User Prompt";
-  const composerPlaceholder =
-    composerMode === "tool_result"
-      ? `Paste the result for ${pendingToolCall?.toolCall?.name ?? "the requested tool"} to continue.`
-      : "Ask the local model to explain, reason, or emit tool calls.";
+  const canResume = !streaming
+    && stoppedConversationId != null
+    && selectedConversation != null
+    && stoppedConversationId === selectedConversation.id
+    && (() => {
+      const lastStep = selectedConversation.steps[selectedConversation.steps.length - 1];
+      return lastStep != null && lastStep.kind !== "assistant";
+    })();
+
+  const composerLabel = "User Prompt";
+  const composerPlaceholder = "Ask the local model to explain, reason, or emit tool calls.";
   const canEditSystemPrompt = selectedConversation != null;
 
   return (
@@ -1321,18 +1307,6 @@ export function ChatWorkspace() {
               onClick={() => void handleOpenModelMeta()}
               aria-label={`Open metadata for ${selectedConversation.model}`}
               size="small"
-            />
-          ) : null}
-          {activeTools.length > 0 ? (
-            <Chip
-              data-tour="tools-chip"
-              icon={<HubOutlinedIcon />}
-              label={`${activeTools.length} tool${activeTools.length === 1 ? "" : "s"}`}
-              size="small"
-              clickable
-              onClick={() => {
-                updateSidebar({ rightSidebarOpen: true, toolsSectionOpen: true });
-              }}
             />
           ) : null}
           <Box data-tour="color-mode-toggle">
@@ -1669,9 +1643,10 @@ export function ChatWorkspace() {
                           };
                           dataTour = tourMap[step.kind];
                         }
+                        const hasToolCalls = step.toolCalls && step.toolCalls.length > 0;
                         return {
                           key: step.id,
-                          depth: stepThreadDepth(step.kind),
+                          depth: hasToolCalls ? 1 : stepThreadDepth(step.kind),
                           element: (
                       <StepCard
                         key={step.id}
@@ -1679,12 +1654,20 @@ export function ChatWorkspace() {
                         dataTour={dataTour}
                         expanded={Boolean(step.expanded)}
                         onToggle={() => handleToggleStep(step.id)}
-                        onInspect={() => setInspectStep(step)}
-                        headerLabel={formatStepHeader(step)}
-                        footerMeta={formatStepFooterMeta(step)}
+                        onInspect={step.kind !== "meta" && step.kind !== "reasoning" ? () => setInspectStep(step) : undefined}
+                        headerLabel={hasToolCalls ? "tool call requests" : formatStepHeader(step)}
+                        footerMeta={hasToolCalls ? [step.model, `${step.toolCalls!.length} tool${step.toolCalls!.length !== 1 ? "s" : ""}`].filter(Boolean).join(" / ") : formatStepFooterMeta(step)}
+                        bgColor={hasToolCalls ? getStepBackgroundColor("tool_call", theme) : undefined}
                         footerActions={
                           step.kind === "user" ? (
                             <>
+                              <IconButton
+                                size="small"
+                                onClick={() => void navigator.clipboard.writeText(step.content)}
+                                aria-label="Copy message"
+                              >
+                                <ContentCopyOutlinedIcon fontSize="small" />
+                              </IconButton>
                               <IconButton
                                 size="small"
                                 onClick={() => handleStartStepEdit(step)}
@@ -1702,15 +1685,24 @@ export function ChatWorkspace() {
                                 <ReplayOutlinedIcon fontSize="small" />
                               </IconButton>
                             </>
-                          ) : step.kind === "assistant" ? (
-                            <IconButton
-                              size="small"
-                              onClick={() => void handleRegenerateAssistantStep(step.id)}
-                              disabled={streaming}
-                              aria-label="Regenerate response"
-                            >
-                              <ReplayOutlinedIcon fontSize="small" />
-                            </IconButton>
+                          ) : step.kind === "assistant" && !hasToolCalls ? (
+                            <>
+                              <IconButton
+                                size="small"
+                                onClick={() => void navigator.clipboard.writeText(step.content)}
+                                aria-label="Copy message"
+                              >
+                                <ContentCopyOutlinedIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                onClick={() => void handleRegenerateAssistantStep(step.id)}
+                                disabled={streaming}
+                                aria-label="Regenerate response"
+                              >
+                                <ReplayOutlinedIcon fontSize="small" />
+                              </IconButton>
+                            </>
                           ) : undefined
                         }
                       >
@@ -1719,7 +1711,25 @@ export function ChatWorkspace() {
                             {JSON.stringify(step.metaEvent.data, null, 2)}
                           </Typography>
                         ) : null}
-                        {editingStepId === step.id ? (
+                        {step.kind === "tool_result" && step.toolResult ? (
+                          <Typography variant="body2" sx={{ mb: 1 }}>
+                            {step.toolResult.name}
+                          </Typography>
+                        ) : null}
+                        {hasToolCalls ? (
+                          <Stack spacing={2}>
+                            {step.toolCalls!.map((tc, i) => (
+                              <Box key={tc.id ?? i}>
+                                <Typography variant="body2" sx={{ mb: 0.5 }}>
+                                  {tc.name}
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontFamily: "monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
+                                  {JSON.stringify(tc.arguments, null, 2)}
+                                </Typography>
+                              </Box>
+                            ))}
+                          </Stack>
+                        ) : editingStepId === step.id ? (
                           <Stack spacing={1.5}>
                             <TextField
                               label="Edit message"
@@ -1744,33 +1754,21 @@ export function ChatWorkspace() {
                               <Button variant="contained" onClick={() => void handleSaveStepEdit(step.id)}>Send</Button>
                             </Stack>
                           </Stack>
-                        ) : ((step.kind === "assistant" || step.kind === "user") && renderMarkdown) ? (
-                          <Box sx={{ lineHeight: 1.7, color: "text.primary", "& pre": { fontFamily: "monospace", whiteSpace: "pre-wrap", backgroundColor: "var(--surface-inset)", p: 1.5, borderRadius: 1, overflow: "auto" }, "& code": { fontFamily: "monospace", fontSize: "0.9em" }, "& p:first-of-type": { mt: 0 }, "& p:last-of-type": { mb: 0 } }}>
-                            <Markdown>{step.content.replace(/^\n+|\n+$/g, "")}</Markdown>
+                        ) : ((step.kind === "assistant" || step.kind === "user" || step.kind === "reasoning") && renderMarkdown) ? (
+                          <Box sx={{ lineHeight: 1.7, color: "text.primary", "& pre": { fontFamily: "monospace", whiteSpace: "pre-wrap", backgroundColor: "var(--surface-inset)", p: 1.5, borderRadius: 1, overflow: "auto" }, "& code": { fontFamily: "monospace", fontSize: "0.9em" }, "& p:first-of-type": { mt: 0 }, "& p:last-of-type": { mb: 0 }, "& table": { borderCollapse: "collapse", width: "100%", my: 1 }, "& th, & td": { border: "1px solid", borderColor: "divider", px: 1.5, py: 0.75, textAlign: "left" }, "& th": { backgroundColor: "var(--surface-inset)", fontWeight: 600 } }}>
+                            <Markdown remarkPlugins={[remarkGfm]}>{step.content.replace(/^\n+|\n+$/g, "")}</Markdown>
                           </Box>
                         ) : (
-                          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, color: "text.primary", fontFamily: step.kind === "tool_result" || step.kind === "harness" ? "monospace" : undefined }}>
-                            {(step.kind === "user" || step.kind === "assistant")
+                          <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, color: "text.primary", fontFamily: step.kind === "tool_result" ? "monospace" : undefined }}>
+                            {(step.kind === "user" || step.kind === "assistant" || step.kind === "reasoning")
                               ? step.content.replace(/^\n+|\n+$/g, "")
-                              : (step.kind === "tool_result" || step.kind === "harness")
+                              : step.kind === "tool_result"
                                 ? prettyPrintJson(step.content)
-                                : step.content}
+                                : (step.kind === "meta" && step.metaEvent?.kind === "search_result")
+                                  ? ""
+                                  : step.content}
                           </Typography>
                         )}
-                        {step.toolCalls && step.toolCalls.length > 0 ? (
-                          <Stack spacing={1.5} sx={{ mt: step.content.trim() ? 2 : 0 }}>
-                            {step.toolCalls.map((tc, i) => (
-                              <Box key={tc.id ?? i}>
-                                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                                  Tool Call Request: {tc.name}
-                                </Typography>
-                                <Typography variant="body2" sx={{ fontFamily: "monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
-                                  {JSON.stringify(tc.arguments, null, 2)}
-                                </Typography>
-                              </Box>
-                            ))}
-                          </Stack>
-                        ) : null}
                       </StepCard>
                           ),
                         };
@@ -1794,6 +1792,17 @@ export function ChatWorkspace() {
                       >
                         <CircularProgress size={24} />
                       </Paper>
+                    ) : canResume ? (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<PlayArrowOutlinedIcon />}
+                        onClick={() => void handleResume()}
+                        aria-label="Resume generation"
+                        sx={{ alignSelf: "center" }}
+                      >
+                        Resume
+                      </Button>
                     ) : null}
                     <Box ref={transcriptEndRef} aria-hidden="true" />
                 </Stack>
@@ -1801,7 +1810,7 @@ export function ChatWorkspace() {
 
               <Box
                 data-tour="composer"
-                data-composer-mode={composerMode}
+
                 sx={{
                   flexShrink: 0,
                   width: "100%",
@@ -1829,9 +1838,7 @@ export function ChatWorkspace() {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       if (composerValue.trim() && !streaming) {
-                        void (composerMode === "tool_result"
-                          ? handleSendToolResult()
-                          : handleSendPrompt());
+                        void handleSendPrompt();
                       }
                     }
                   }}
@@ -2607,7 +2614,6 @@ function isVisibleTranscriptStep(step: ConversationStep) {
     step.kind === "assistant" ||
     step.kind === "reasoning" ||
     step.kind === "tool_result" ||
-    step.kind === "harness" ||
     step.kind === "meta"
   );
 }
@@ -2620,7 +2626,6 @@ function stepThreadDepth(kind: ConversationStep["kind"]): number {
     case "tool_result":
       return 1;
     case "meta":
-    case "harness":
       return 2;
     default:
       return 0;
@@ -2695,6 +2700,7 @@ interface StepCardProps {
   footerActions?: React.ReactNode;
   children: React.ReactNode;
   dataTour?: string;
+  bgColor?: string;
 }
 
 function StepCard({
@@ -2707,6 +2713,7 @@ function StepCard({
   footerActions,
   children,
   dataTour,
+  bgColor,
 }: StepCardProps) {
   const theme = useTheme();
   const card = (
@@ -2717,7 +2724,7 @@ function StepCard({
         overflow: "hidden",
         border: "1px solid",
         borderColor: "divider",
-        backgroundColor: getStepBackgroundColor(step.kind, theme),
+        backgroundColor: bgColor ?? getStepBackgroundColor(step.kind, theme),
       }}
     >
       <ListItemButton onClick={onToggle}>
@@ -2757,11 +2764,8 @@ function StepCard({
 }
 
 function formatStepHeader(step: ConversationStep): string {
-  if (step.kind === "tool_result" && step.toolResult) {
-    return `Tool Call Response: ${step.toolResult.name} • ${formatTimestamp(step.createdAt)}`;
-  }
-  if (step.kind === "harness") {
-    return `Harness • ${step.title} • ${formatTimestamp(step.createdAt)}`;
+  if (step.kind === "tool_result") {
+    return "tool call response";
   }
   if (step.kind === "meta" && step.metaEvent) {
     const kind = step.metaEvent.kind;
@@ -2775,13 +2779,19 @@ function formatStepHeader(step: ConversationStep): string {
     }
     return step.metaEvent.kind.replace(/_/g, " ");
   }
-  return `${step.kind.replace("_", " ")} • ${formatTimestamp(step.createdAt)}`;
+  return step.kind.replace("_", " ");
 }
 
 function formatStepFooterMeta(step: ConversationStep): string | null {
   const parts: string[] = [];
 
-  if (step.kind === "meta" && step.metaEvent?.durationMs != null) {
+  if (step.model && (step.kind === "assistant" || step.kind === "reasoning")) {
+    parts.push(step.model);
+  }
+
+  if (step.kind === "meta" && step.metaEvent?.kind === "search_result" && step.content) {
+    parts.push(step.content);
+  } else if (step.kind === "meta" && step.metaEvent?.durationMs != null) {
     parts.push(`${step.metaEvent.durationMs}ms`);
   }
 
@@ -2808,10 +2818,10 @@ function getStepBackgroundColor(
         return alpha(theme.palette.success.dark, 0.24);
       case "reasoning":
         return alpha(theme.palette.warning.dark, 0.2);
+      case "tool_call":
+        return alpha(theme.palette.error.dark, 0.14);
       case "tool_result":
         return alpha(theme.palette.error.dark, 0.22);
-      case "harness":
-        return alpha("#ff9800", 0.18);
       case "meta":
         return alpha("#00bcd4", 0.15);
       default:
@@ -2828,71 +2838,15 @@ function getStepBackgroundColor(
       return alpha(theme.palette.success.light, 0.2);
     case "reasoning":
       return alpha(theme.palette.warning.light, 0.22);
+    case "tool_call":
+      return alpha(theme.palette.error.light, 0.11);
     case "tool_result":
       return alpha(theme.palette.error.light, 0.18);
-    case "harness":
-      return alpha("#ff9800", 0.14);
     case "meta":
       return alpha("#00bcd4", 0.12);
     default:
       return alpha(theme.palette.background.paper, 0.92);
   }
-}
-
-function hasMatchingToolResult(
-  tc: ToolCallPayload,
-  steps: ConversationStep[],
-  afterIndex: number,
-): boolean {
-  for (let i = afterIndex + 1; i < steps.length; i++) {
-    const s = steps[i];
-    if (s.kind !== "tool_result" || !s.toolResult) continue;
-    // Match by call ID when both sides have one (handles duplicate tool names)
-    if (tc.id && s.toolResult.id) {
-      if (s.toolResult.id === tc.id) return true;
-    } else {
-      // Fall back to name matching when IDs aren't available (e.g. Ollama)
-      if (s.toolResult.name === tc.name) return true;
-    }
-  }
-  return false;
-}
-
-function getPendingToolCallStep(conversation: Conversation): ConversationStep | null {
-  // Walk backward to find the most recent unresolved tool call
-  for (let index = conversation.steps.length - 1; index >= 0; index -= 1) {
-    const step = conversation.steps[index];
-    if (step.kind === "user") {
-      // Stop at the last user message — tool_calls before it belong to a prior turn
-      return null;
-    }
-
-    // Check standalone tool_call steps
-    if (step.kind === "tool_call" && step.toolCall) {
-      if (!hasMatchingToolResult(step.toolCall, conversation.steps, index)) {
-        return step;
-      }
-    }
-
-    // Check merged toolCalls[] on assistant steps (backend merges tool calls here)
-    if (step.kind === "assistant" && step.toolCalls?.length) {
-      for (const tc of step.toolCalls) {
-        if (!hasMatchingToolResult(tc, conversation.steps, index)) {
-          return {
-            id: step.id,
-            kind: "tool_call",
-            title: `Tool Call: ${tc.name}`,
-            content: JSON.stringify(tc.arguments, null, 2),
-            createdAt: step.createdAt,
-            expanded: true,
-            toolCall: tc,
-          };
-        }
-      }
-    }
-  }
-
-  return null;
 }
 
 function findResponseStartIndex(steps: ConversationStep[], assistantIndex: number) {

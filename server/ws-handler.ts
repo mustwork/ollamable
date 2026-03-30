@@ -143,6 +143,9 @@ export class ConnectionHandler {
           },
         });
 
+        // Tag each LLM-generated step with the model name
+        for (const s of responseSteps) s.model = model;
+
         // Separate tool_call steps from other response steps
         const toolCallSteps = responseSteps.filter(
           (s) => s.kind === "tool_call" && s.toolCall
@@ -206,17 +209,21 @@ export class ConnectionHandler {
 
           console.log(`[ws] conversation=${conversationId} tool.exec ${name} args=${truncatedArgs}`);
 
-          // Harness: dispatching tool
+          // Use a stable ID so the in-progress step gets replaced by the final result
+          const stepId = randomUUID();
+
+          // Send in-progress tool_result (same kind/ID as final result)
           this.send({
             type: "chat.steps",
             conversationId,
             steps: [{
-              id: randomUUID(),
-              kind: "harness",
+              id: stepId,
+              kind: "tool_result",
               title: `Executing: ${name}`,
               content: JSON.stringify(toolArgs, null, 2),
               createdAt: new Date().toISOString(),
               expanded: true,
+              toolResult: { id: toolStep.toolCall!.id, name },
             }],
           });
 
@@ -231,22 +238,8 @@ export class ConnectionHandler {
 
           console.log(`[ws] conversation=${conversationId} tool.done ${name} ${durationMs}ms result=${truncatedResult}`);
 
-          // Harness: execution result
-          this.send({
-            type: "chat.steps",
-            conversationId,
-            steps: [{
-              id: randomUUID(),
-              kind: "harness",
-              title: `Result: ${name} (${durationMs}ms)`,
-              content: result,
-              createdAt: new Date().toISOString(),
-              expanded: true,
-            }],
-          });
-
           const toolResultStep: ConversationStep = {
-            id: randomUUID(),
+            id: stepId,
             kind: "tool_result",
             title: `Result: ${name}`,
             content: result,

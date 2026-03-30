@@ -5,7 +5,6 @@ export type StepKind =
   | "reasoning"
   | "tool_call"
   | "tool_result"
-  | "harness"
   | "meta";
 
 export type MetaEventKind =
@@ -59,6 +58,7 @@ export interface ConversationStep {
   toolResult?: ToolResultPayload;
   metaEvent?: MetaEventPayload;
   usage?: UsagePayload;
+  model?: string;
 }
 
 export interface Conversation {
