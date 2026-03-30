@@ -789,3 +789,100 @@ test("keeps the tool result textarea usable when the tool result input grows lar
   expect(inputBox).not.toBeNull();
   expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(viewport!.height);
 });
+
+// ── System prompt examples ────────────────────────────────────────────
+
+test("shows system prompt example chips on a fresh conversation", async ({ page }) => {
+  await page.goto("/");
+
+  const examples = page.getByTestId("system-prompt-examples");
+  await expect(examples).toBeVisible();
+  await expect(examples.getByText("Helpful Assistant")).toBeVisible();
+  await expect(examples.getByText("Code Reviewer")).toBeVisible();
+  await expect(examples.getByText("Socratic Tutor")).toBeVisible();
+  await expect(examples.getByText("Creative Writer")).toBeVisible();
+});
+
+test("clicking an example chip fills the system prompt", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByTestId("example-code-reviewer").click();
+
+  const systemPrompt = page.getByRole("textbox", { name: "System prompt" });
+  await expect(systemPrompt).toHaveValue(/senior software engineer/);
+});
+
+test("example chips disappear after the user sends a message", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("system-prompt-examples")).toBeVisible();
+
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Hello");
+  await prompt.press("Enter");
+
+  await expect(page.getByTestId("system-prompt-examples")).toHaveCount(0);
+});
+
+test("toggling 'Show examples' off in client settings hides the example chips", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("system-prompt-examples")).toBeVisible();
+
+  // Open right sidebar and Client section
+  await page.locator('button[aria-label="Expand tools sidebar"]').click();
+  await page.getByText("Client").click();
+  await page.getByText("Show examples").click();
+
+  await expect(page.getByTestId("system-prompt-examples")).toHaveCount(0);
+
+  // Toggle back on
+  await page.getByText("Show examples").click();
+  await expect(page.getByTestId("system-prompt-examples")).toBeVisible();
+});
+
+test("'Show examples' setting persists across reloads", async ({ page }) => {
+  await page.goto("/");
+
+  // Disable examples
+  await page.locator('button[aria-label="Expand tools sidebar"]').click();
+  await page.getByText("Client").click();
+  await page.getByText("Show examples").click();
+  await expect(page.getByTestId("system-prompt-examples")).toHaveCount(0);
+
+  await page.reload();
+
+  await expect(page.getByTestId("system-prompt-examples")).toHaveCount(0);
+});
+
+// ── Collapse-by-default client settings ──────────────────────────────
+
+test("reasoning steps stay collapsed after streaming when collapseReasoning is enabled", async ({ page }) => {
+  // Pre-set the sidebar state with collapseReasoning enabled
+  await page.addInitScript(() => {
+    const state = JSON.parse(
+      window.localStorage.getItem("ollamable.sidebarState") || "{}"
+    );
+    window.localStorage.setItem(
+      "ollamable.sidebarState",
+      JSON.stringify({ ...state, collapseReasoning: true })
+    );
+  });
+
+  await page.goto("/");
+
+  const prompt = page.getByRole("textbox", { name: "User Prompt" });
+  await prompt.fill("Trigger a response with reasoning.");
+  await prompt.press("Enter");
+
+  // Wait for the assistant response to appear (stream complete)
+  await expect(
+    page.getByText("This is a streamed answer from the mocked Ollama endpoint.")
+  ).toBeVisible();
+
+  // The reasoning step card should exist but its content should be hidden (collapsed)
+  await expect(page.locator('[data-step-kind="reasoning"]')).toBeVisible();
+  await expect(
+    page.locator('[data-step-kind="reasoning"]').getByText("I should show my reasoning as a separate step.")
+  ).toBeHidden();
+});

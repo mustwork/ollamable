@@ -22,6 +22,13 @@ export interface SidebarState {
   clientSectionOpen: boolean;
   renderMarkdown: boolean;
   showTour: boolean;
+  showExamples: boolean;
+  /** Collapse reasoning steps by default */
+  collapseReasoning: boolean;
+  /** Collapse tool-call result steps by default */
+  collapseToolCalls: boolean;
+  /** Collapse harness & meta (server) steps by default */
+  collapseServerMessages: boolean;
   /** Per-subsection collapse: key = "builtin" | "mcp-{serverName}" | provider name */
   subsections: Record<string, boolean>;
 }
@@ -36,6 +43,10 @@ const DEFAULT_SIDEBAR_STATE: SidebarState = {
   clientSectionOpen: false,
   renderMarkdown: true,
   showTour: true,
+  showExamples: true,
+  collapseReasoning: false,
+  collapseToolCalls: false,
+  collapseServerMessages: false,
   subsections: {},
 };
 
@@ -207,6 +218,16 @@ export function saveSelectedConversationId(id: string): void {
 export function loadSelectedConversationId(): string | null {
   return window.localStorage.getItem(SELECTED_KEY);
 }
+
+import rawExamples from "@/config/system-prompt-examples.yaml";
+
+export interface SystemPromptExample {
+  label: string;
+  prompt: string;
+}
+
+export const SYSTEM_PROMPT_EXAMPLES: SystemPromptExample[] =
+  rawExamples as SystemPromptExample[];
 
 export function formatTimestamp(value: string): string {
   return new Intl.DateTimeFormat(undefined, {

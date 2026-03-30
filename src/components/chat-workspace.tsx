@@ -51,7 +51,7 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
 import TourOutlinedIcon from "@mui/icons-material/TourOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
-import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
+import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, StepKind, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
 import {
   createConversation,
@@ -66,6 +66,7 @@ import {
   saveConversations,
   saveSelectedConversationId,
   saveSidebarState,
+  SYSTEM_PROMPT_EXAMPLES,
 } from "@/src/lib/chat";
 import type { SidebarState } from "@/src/lib/chat";
 import {
@@ -113,6 +114,10 @@ export function ChatWorkspace() {
     clientSectionOpen: false,
     renderMarkdown: true,
     showTour: true,
+    showExamples: true,
+    collapseReasoning: false,
+    collapseToolCalls: false,
+    collapseServerMessages: false,
     subsections: {},
   });
 
@@ -139,8 +144,23 @@ export function ChatWorkspace() {
     clientSectionOpen,
     renderMarkdown,
     showTour,
+    showExamples,
+    collapseReasoning,
+    collapseToolCalls,
+    collapseServerMessages,
     subsections,
   } = sidebarState;
+
+  const sidebarRef = useRef(sidebarState);
+  sidebarRef.current = sidebarState;
+
+  const defaultExpanded = useCallback((kind: StepKind): boolean => {
+    const s = sidebarRef.current;
+    if (kind === "reasoning" && s.collapseReasoning) return false;
+    if (kind === "tool_result" && s.collapseToolCalls) return false;
+    if ((kind === "harness" || kind === "meta") && s.collapseServerMessages) return false;
+    return true;
+  }, []);
 
   const isSubsectionOpen = useCallback(
     (key: string) => subsections[key] ?? false,
@@ -859,7 +879,7 @@ export function ChatWorkspace() {
       const nextStreamingSteps = partialSteps.map((step) => ({
         ...step,
         id: `stream-${step.id}`,
-        expanded: true,
+        expanded: defaultExpanded(step.kind),
       }));
 
       return {
@@ -876,7 +896,7 @@ export function ChatWorkspace() {
       const stableSteps = conversation.steps.filter((s) => !s.id.startsWith("stream-"));
       return {
         ...conversation,
-        steps: [...stableSteps, ...newSteps.map((s) => ({ ...s, expanded: true }))],
+        steps: [...stableSteps, ...newSteps.map((s) => ({ ...s, expanded: defaultExpanded(s.kind) }))],
         updatedAt: new Date().toISOString(),
       };
     });
@@ -888,7 +908,7 @@ export function ChatWorkspace() {
       const streamingIdx = conversation.steps.findIndex((s) => s.id.startsWith("stream-"));
       const insertIdx = streamingIdx === -1 ? conversation.steps.length : streamingIdx;
       const nextSteps = [...conversation.steps];
-      nextSteps.splice(insertIdx, 0, metaStep);
+      nextSteps.splice(insertIdx, 0, { ...metaStep, expanded: defaultExpanded(metaStep.kind) });
       return {
         ...conversation,
         steps: nextSteps,
@@ -948,7 +968,9 @@ export function ChatWorkspace() {
       updateConversation(nextConversation.id, (conversation) => {
         const stableSteps = conversation.steps.filter((step) => !step.id.startsWith("stream-"));
         const existingIds = new Set(stableSteps.map((s) => s.id));
-        const newSteps = responseSteps.filter((s) => !existingIds.has(s.id));
+        const newSteps = responseSteps
+          .filter((s) => !existingIds.has(s.id))
+          .map((s) => ({ ...s, expanded: defaultExpanded(s.kind) }));
         return {
           ...conversation,
           steps: [...stableSteps, ...newSteps],
@@ -1580,6 +1602,23 @@ export function ChatWorkspace() {
                     placeholder="No system prompt set."
                     sx={{ width: "100%" }}
                   />
+
+                  {showExamples && !selectedConversation.steps.some((s) => s.kind === "user") ? (
+                    <Stack data-testid="system-prompt-examples" spacing={1}>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        {SYSTEM_PROMPT_EXAMPLES.map((example) => (
+                          <Chip
+                            key={example.label}
+                            label={example.label}
+                            variant="outlined"
+                            size="small"
+                            onClick={() => handlePromptChange(example.prompt)}
+                            data-testid={`example-${example.label.toLowerCase().replace(/\s+/g, "-")}`}
+                          />
+                        ))}
+                      </Stack>
+                    </Stack>
+                  ) : null}
 
                     {activeTools.length > 0 ? (
                       <StepCard
@@ -2286,12 +2325,56 @@ export function ChatWorkspace() {
                         <FormControlLabel
                           control={
                             <Checkbox
+                              checked={showExamples}
+                              onChange={() => updateSidebar({ showExamples: !showExamples })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Show examples</Typography>}
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
                               checked={showTour}
                               onChange={() => updateSidebar({ showTour: !showTour })}
                               size="small"
                             />
                           }
                           label={<Typography variant="body2">Show tour</Typography>}
+                        />
+
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, mb: 0.5 }}>
+                          Collapse by default
+                        </Typography>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={collapseReasoning}
+                              onChange={() => updateSidebar({ collapseReasoning: !collapseReasoning })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Reasoning</Typography>}
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={collapseToolCalls}
+                              onChange={() => updateSidebar({ collapseToolCalls: !collapseToolCalls })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Tool calls</Typography>}
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={collapseServerMessages}
+                              onChange={() => updateSidebar({ collapseServerMessages: !collapseServerMessages })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Server / harness messages</Typography>}
                         />
                       </Stack>
                     </Collapse>
