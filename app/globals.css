@@ -19,6 +19,7 @@ html.light {
   --surface-inset: rgba(17, 24, 39, 0.03);
   --surface-composer: linear-gradient(180deg, rgba(255,255,255,0.94), rgba(239,243,249,0.98));
   --surface-composer-tool: linear-gradient(180deg, rgba(255,246,238,0.96), rgba(255,236,223,0.98));
+  --thread-bar-color: rgba(16, 24, 40, 0.08);
 }
 
 html.light body {
@@ -35,6 +36,7 @@ html.dark {
   --surface-inset: rgba(255, 255, 255, 0.02);
   --surface-composer: linear-gradient(180deg, rgba(13,18,29,0.95), rgba(9,14,23,0.98));
   --surface-composer-tool: linear-gradient(180deg, rgba(45,23,18,0.94), rgba(34,16,12,0.98));
+  --thread-bar-color: rgba(255, 255, 255, 0.38);
 }
 
 html.dark body {

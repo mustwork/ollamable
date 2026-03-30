@@ -27,6 +27,8 @@ export interface SidebarState {
   collapseReasoning: boolean;
   /** Collapse tool-call result steps by default */
   collapseToolCalls: boolean;
+  /** Collapse tool-call request steps by default */
+  collapseTools: boolean;
   /** Collapse harness & meta (server) steps by default */
   collapseServerMessages: boolean;
   /** Per-subsection collapse: key = "builtin" | "mcp-{serverName}" | provider name */
@@ -46,6 +48,7 @@ const DEFAULT_SIDEBAR_STATE: SidebarState = {
   showExamples: true,
   collapseReasoning: false,
   collapseToolCalls: false,
+  collapseTools: true,
   collapseServerMessages: false,
   subsections: {},
 };

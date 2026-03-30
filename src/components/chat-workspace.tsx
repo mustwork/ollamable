@@ -117,6 +117,7 @@ export function ChatWorkspace() {
     showExamples: true,
     collapseReasoning: false,
     collapseToolCalls: false,
+    collapseTools: true,
     collapseServerMessages: false,
     subsections: {},
   });
@@ -147,6 +148,7 @@ export function ChatWorkspace() {
     showExamples,
     collapseReasoning,
     collapseToolCalls,
+    collapseTools,
     collapseServerMessages,
     subsections,
   } = sidebarState;
@@ -157,6 +159,7 @@ export function ChatWorkspace() {
   const defaultExpanded = useCallback((kind: StepKind): boolean => {
     const s = sidebarRef.current;
     if (kind === "reasoning" && s.collapseReasoning) return false;
+    if (kind === "tool_call" && s.collapseTools) return false;
     if (kind === "tool_result" && s.collapseToolCalls) return false;
     if ((kind === "harness" || kind === "meta") && s.collapseServerMessages) return false;
     return true;
@@ -1652,7 +1655,7 @@ export function ChatWorkspace() {
 
                     {(() => {
                       const seenKinds = new Set<string>();
-                      return visibleTranscriptSteps.map((step) => {
+                      const items = visibleTranscriptSteps.map((step) => {
                         let dataTour: string | undefined;
                         if (!seenKinds.has(step.kind)) {
                           seenKinds.add(step.kind);
@@ -1666,7 +1669,10 @@ export function ChatWorkspace() {
                           };
                           dataTour = tourMap[step.kind];
                         }
-                        return (
+                        return {
+                          key: step.id,
+                          depth: stepThreadDepth(step.kind),
+                          element: (
                       <StepCard
                         key={step.id}
                         step={step}
@@ -1766,8 +1772,10 @@ export function ChatWorkspace() {
                           </Stack>
                         ) : null}
                       </StepCard>
-                        );
+                          ),
+                        };
                       });
+                      return wrapWithThreadBars(items, theme);
                     })()}
                     {streaming ? (
                       <Paper
@@ -2369,6 +2377,16 @@ export function ChatWorkspace() {
                         <FormControlLabel
                           control={
                             <Checkbox
+                              checked={collapseTools}
+                              onChange={() => updateSidebar({ collapseTools: !collapseTools })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">Tools</Typography>}
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
                               checked={collapseServerMessages}
                               onChange={() => updateSidebar({ collapseServerMessages: !collapseServerMessages })}
                               size="small"
@@ -2594,6 +2612,77 @@ function isVisibleTranscriptStep(step: ConversationStep) {
   );
 }
 
+/** Thread depth for visual nesting. Level 0 = no bar, 1 = one bar, 2 = two bars. */
+function stepThreadDepth(kind: ConversationStep["kind"]): number {
+  switch (kind) {
+    case "reasoning":
+    case "tool_call":
+    case "tool_result":
+      return 1;
+    case "meta":
+    case "harness":
+      return 2;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Wraps an array of already-rendered step elements with thread-bar
+ * containers based on each step's depth level.  Consecutive steps at
+ * depth >= N are grouped and wrapped in a flex row with N vertical bars.
+ */
+function wrapWithThreadBars(
+  items: { key: string; depth: number; element: React.ReactNode }[],
+  theme: Theme,
+): React.ReactNode[] {
+  const barColor = "var(--thread-bar-color)";
+  const result: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < items.length) {
+    const item = items[i];
+    if (item.depth === 0) {
+      result.push(item.element);
+      i++;
+      continue;
+    }
+
+    // Collect consecutive run at depth >= 1
+    const group: typeof items = [];
+    while (i < items.length && items[i].depth >= 1) {
+      group.push(items[i]);
+      i++;
+    }
+
+    // Recursively wrap depth-2 items within this group
+    const innerItems = group.map((g) => ({
+      key: g.key,
+      depth: g.depth - 1,
+      element: g.element,
+    }));
+    const innerContent = wrapWithThreadBars(innerItems, theme);
+
+    result.push(
+      <Box key={`thread-${group[0].key}`} sx={{ display: "flex", gap: 1.5 }}>
+        <Box
+          sx={{
+            width: 3,
+            flexShrink: 0,
+            borderRadius: 1,
+            backgroundColor: barColor,
+          }}
+        />
+        <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
+          {innerContent}
+        </Stack>
+      </Box>,
+    );
+  }
+
+  return result;
+}
+
 // ── Step Card ────────────────────────────────────────────────────────
 
 interface StepCardProps {
@@ -2620,7 +2709,7 @@ function StepCard({
   dataTour,
 }: StepCardProps) {
   const theme = useTheme();
-  return (
+  const card = (
     <Paper
       data-step-kind={step.kind}
       data-tour={dataTour}
@@ -2663,6 +2752,8 @@ function StepCard({
       </Collapse>
     </Paper>
   );
+
+  return card;
 }
 
 function formatStepHeader(step: ConversationStep): string {
