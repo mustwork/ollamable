@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeRegistry } from "@/src/components/theme-registry";
 import { ChatWorkspace } from "@/src/components/chat-workspace";
@@ -41,6 +41,24 @@ vi.mock("@/src/lib/ollama", async (importOriginal) => {
       },
       {
         name: "nomic-embed-text:latest",
+        family: "bert",
+        families: ["bert"],
+        parameterSize: "768D",
+      },
+    ]),
+    fetchAllModels: vi.fn().mockResolvedValue([
+      {
+        name: "qwen3:latest",
+        provider: "ollama",
+        providerName: "Ollama",
+        family: "qwen",
+        families: ["qwen"],
+        parameterSize: "8B",
+      },
+      {
+        name: "nomic-embed-text:latest",
+        provider: "ollama",
+        providerName: "Ollama",
         family: "bert",
         families: ["bert"],
         parameterSize: "768D",
@@ -154,8 +172,7 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findAllByText("qwen3:latest");
-    await user.click(screen.getByRole("button", { name: "Open metadata for qwen3:latest" }));
+    await user.click(await screen.findByRole("button", { name: "Open metadata for qwen3:latest" }));
 
     expect(mockedFetchModelMeta).toHaveBeenCalledWith(
       expect.objectContaining({ name: "qwen3:latest" })
@@ -549,16 +566,18 @@ describe("ChatWorkspace", () => {
     });
 
     // Resolve stream so the test completes cleanly
-    resolveStream?.([
-      {
-        id: "assistant-1",
-        kind: "assistant",
-        title: "Assistant",
-        content: "Streamed answer",
-        createdAt: new Date().toISOString(),
-        expanded: true,
-      },
-    ]);
+    await act(async () => {
+      resolveStream?.([
+        {
+          id: "assistant-1",
+          kind: "assistant",
+          title: "Assistant",
+          content: "Streamed answer",
+          createdAt: new Date().toISOString(),
+          expanded: true,
+        },
+      ]);
+    });
   });
 
   it("deletes conversations and removes them from persisted storage", async () => {

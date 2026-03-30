@@ -533,7 +533,7 @@ test("lets the user open the right sidebar and see tool definitions", async ({ p
   // Open the right sidebar
   await page.locator('button[aria-label="Expand tools sidebar"]').click();
   // Expand the Tools section
-  await page.getByText("Tools").click();
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
   // Expand the built-in subsection
   await page.getByText("built-in").click();
   await expect(page.getByText("web_search").first()).toBeVisible();

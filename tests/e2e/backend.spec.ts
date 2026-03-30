@@ -527,7 +527,7 @@ test("sends active tool definitions in chat.send when tools are enabled", async 
 
   // Open the right sidebar and enable web_search
   await page.getByRole("button", { name: "Expand tools sidebar" }).click();
-  await page.getByText("Tools").click();
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
   await page.getByText("built-in").click();
   await page.getByRole("checkbox", { name: /web_search/i }).check();
 

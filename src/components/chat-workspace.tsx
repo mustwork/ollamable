@@ -1233,7 +1233,7 @@ export function ChatWorkspace() {
     })();
 
   const composerLabel = "User Prompt";
-  const composerPlaceholder = "Ask the local model to explain, reason, or emit tool calls.";
+  const composerPlaceholder = "";
   const canEditSystemPrompt = selectedConversation != null;
 
   return (
@@ -1561,8 +1561,8 @@ export function ChatWorkspace() {
                 overflowY: "auto",
                 px: 2,
                 scrollbarGutter: "stable",
-                maskImage: "linear-gradient(to bottom, transparent, black 2px, black calc(100% - 6px), transparent)",
-                WebkitMaskImage: "linear-gradient(to bottom, transparent, black 2px, black calc(100% - 6px), transparent)",
+                maskImage: "linear-gradient(to bottom, transparent, black 2px, black calc(100% - 12px), transparent)",
+                WebkitMaskImage: "linear-gradient(to bottom, transparent, black 2px, black calc(100% - 12px), transparent)",
               }}>
                 <Stack spacing={2} sx={{ pt: 1, pb: 1, maxWidth: sidebarOpen && rightSidebarOpen ? 900 : 700, mx: "auto", transition: "max-width 0.35s ease" }}>
                   {error ? <Alert severity="warning">{error}</Alert> : null}
@@ -1572,7 +1572,8 @@ export function ChatWorkspace() {
                     label="System prompt"
                     InputLabelProps={{ shrink: true }}
                     multiline
-                    minRows={4}
+                    minRows={2}
+                    maxRows={12}
                     value={selectedConversation.systemPrompt}
                     onChange={(event) => handlePromptChange(event.target.value)}
                     disabled={!canEditSystemPrompt}
@@ -1817,6 +1818,8 @@ export function ChatWorkspace() {
                   maxWidth: (sidebarOpen && rightSidebarOpen ? 900 : 700) + 48,
                   transition: "max-width 0.35s ease",
                   px: 2,
+                  pt: 1,
+                  pb: 2,
                   scrollbarGutter: "stable",
                 }}
               >
