@@ -1630,6 +1630,7 @@ export function ChatWorkspace() {
 
                     {(() => {
                       const seenKinds = new Set<string>();
+                      let cumulativeToolCalls = 0;
                       const items = visibleTranscriptSteps.map((step) => {
                         let dataTour: string | undefined;
                         if (!seenKinds.has(step.kind)) {
@@ -1645,6 +1646,9 @@ export function ChatWorkspace() {
                           dataTour = tourMap[step.kind];
                         }
                         const hasToolCalls = step.toolCalls && step.toolCalls.length > 0;
+                        if (hasToolCalls) {
+                          cumulativeToolCalls += step.toolCalls!.length;
+                        }
                         return {
                           key: step.id,
                           depth: hasToolCalls ? 1 : stepThreadDepth(step.kind),
@@ -1657,7 +1661,16 @@ export function ChatWorkspace() {
                         onToggle={() => handleToggleStep(step.id)}
                         onInspect={step.kind !== "meta" && step.kind !== "reasoning" ? () => setInspectStep(step) : undefined}
                         headerLabel={hasToolCalls ? "tool call requests" : formatStepHeader(step)}
-                        footerMeta={hasToolCalls ? [step.model, `${step.toolCalls!.length} tool${step.toolCalls!.length !== 1 ? "s" : ""}`].filter(Boolean).join(" / ") : formatStepFooterMeta(step)}
+                        footerMeta={(() => {
+                          const baseMeta = hasToolCalls
+                            ? [step.model, `${step.toolCalls!.length} tool${step.toolCalls!.length !== 1 ? "s" : ""}`].filter(Boolean).join(" / ")
+                            : formatStepFooterMeta(step);
+                          if (step.kind === "assistant" && cumulativeToolCalls > 0) {
+                            const suffix = `tool calls: ${cumulativeToolCalls}`;
+                            return baseMeta ? `${baseMeta} / ${suffix}` : suffix;
+                          }
+                          return baseMeta;
+                        })()}
                         bgColor={hasToolCalls ? getStepBackgroundColor("tool_call", theme) : undefined}
                         footerActions={
                           step.kind === "user" ? (
