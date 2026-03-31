@@ -63,7 +63,7 @@ const children = [];
 
 const backend = spawn(npmCommand, ["run", "dev:server"], {
   stdio: "inherit",
-  env: { ...process.env },
+  env: { ...process.env, PORT: "3001" },
 });
 children.push(backend);
 

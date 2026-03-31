@@ -4,7 +4,16 @@ import type {
   ToolDefinition,
 } from "@/src/types/chat";
 
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
+function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}`;
+  }
+  return "ws://localhost:3000";
+}
+
+export const WS_URL = getWsUrl();
 
 interface ServerMessage {
   type: string;

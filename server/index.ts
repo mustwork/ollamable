@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { resolve, dirname, join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { ConnectionHandler } from "./ws-handler.js";
@@ -31,7 +31,8 @@ for (const envFile of [".env", ".envrc"]) {
     // File not found — skip
   }
 }
-const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
+const PORT = parseInt(process.env.PORT ?? process.env.WS_PORT ?? "3000", 10);
+const STATIC_DIR = resolve(PROJECT_ROOT, "out");
 const MCP_CONFIG = process.env.MCP_CONFIG ?? resolve(__dirname, "mcp-config.json");
 
 const providerConfigs = loadProviderConfigs();
@@ -107,8 +108,43 @@ const httpServer = createServer(
       return;
     }
 
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "ollamable-server" }));
+    // ── Static file serving (production) ──────────────────────────────
+    if (existsSync(STATIC_DIR)) {
+      const MIME: Record<string, string> = {
+        ".html": "text/html",
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".woff2": "font/woff2",
+        ".woff": "font/woff",
+        ".txt": "text/plain",
+      };
+
+      const urlPath = req.url?.split("?")[0] ?? "/";
+      // Try exact file, then .html, then index.html for directories
+      const candidates = [
+        join(STATIC_DIR, urlPath),
+        join(STATIC_DIR, urlPath + ".html"),
+        join(STATIC_DIR, urlPath, "index.html"),
+      ];
+
+      for (const filePath of candidates) {
+        if (existsSync(filePath) && statSync(filePath).isFile()) {
+          const ext = extname(filePath);
+          const contentType = MIME[ext] ?? "application/octet-stream";
+          const body = readFileSync(filePath);
+          res.writeHead(200, { "Content-Type": contentType });
+          res.end(body);
+          return;
+        }
+      }
+    }
+
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "not found" }));
   }
 );
 
@@ -127,7 +163,7 @@ wss.on("connection", (ws) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`[server] Ollamable backend listening on ws://localhost:${PORT}`);
+  console.log(`[server] Ollamable listening on http://localhost:${PORT}`);
 });
 
 function shutdown() {
