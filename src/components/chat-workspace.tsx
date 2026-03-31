@@ -1535,10 +1535,25 @@ export function ChatWorkspace() {
                   <Typography
                     variant="body2"
                     fontWeight={600}
-                    onClick={(e) => { e.stopPropagation(); handleStartTitleEdit(conversation); }}
-                    sx={{ cursor: "text" }}
+                    onClick={(e) => {
+                      if (conversation.id === selectedConversationId) {
+                        e.stopPropagation();
+                        handleStartTitleEdit(conversation);
+                      }
+                    }}
+                    sx={{
+                      cursor: conversation.id === selectedConversationId ? "text" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      "& .edit-pencil": { opacity: 0, transition: "opacity 0.15s ease" },
+                      "&:hover .edit-pencil": { opacity: 1 },
+                    }}
                   >
                     {conversation.title}
+                    {conversation.id === selectedConversationId && (
+                      <EditOutlinedIcon className="edit-pencil" sx={{ fontSize: 12, color: "text.secondary", flexShrink: 0 }} />
+                    )}
                   </Typography>
                 )}
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
@@ -1589,14 +1604,19 @@ export function ChatWorkspace() {
                       onClick={(e) => { e.stopPropagation(); handleStartNoteEdit(conversation); }}
                       sx={{
                         mt: 0.5,
-                        display: "block",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 0.5,
                         fontStyle: "italic",
                         cursor: "text",
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-word",
+                        "& .edit-pencil": { opacity: 0, transition: "opacity 0.15s ease" },
+                        "&:hover .edit-pencil": { opacity: 1 },
                       }}
                     >
                       {conversation.note}
+                      <EditOutlinedIcon className="edit-pencil" sx={{ fontSize: 12, color: "text.secondary", flexShrink: 0, mt: "2px" }} />
                     </Typography>
                   )
                 )}
