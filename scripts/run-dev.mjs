@@ -53,7 +53,7 @@ function openBrowser(url) {
   child.unref();
 }
 
-const port = await getFreePort();
+const port = process.env.PORT ?? "3000";
 const url = `http://127.0.0.1:${port}`;
 
 console.log(`Starting dev server on ${url}`);
@@ -61,9 +61,10 @@ openBrowser(url);
 
 const children = [];
 
+const backendPort = String(Number(port) + 1);
 const backend = spawn(npmCommand, ["run", "dev:server"], {
   stdio: "inherit",
-  env: { ...process.env, PORT: "3001" },
+  env: { ...process.env, PORT: backendPort },
 });
 children.push(backend);
 
@@ -72,7 +73,7 @@ const frontend = spawn(
   ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", port],
   {
     stdio: "inherit",
-    env: { ...process.env },
+    env: { ...process.env, NEXT_PUBLIC_WS_URL: `ws://127.0.0.1:${backendPort}` },
   }
 );
 children.push(frontend);
