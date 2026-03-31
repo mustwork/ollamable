@@ -3036,16 +3036,8 @@ function groupModelsByProvider(models: OllamaModel[]) {
   return elements;
 }
 
-/** Known reasoning model name patterns. */
+/** Known reasoning model name patterns (for providers that don't report capabilities). */
 const REASONING_MODEL_PATTERNS = [
-  // Ollama / open-source reasoning models
-  /\bdeepseek-r1\b/i,
-  /\bqwq\b/i,
-  /\bqwen3\b/i,
-  /\bmarco-o1\b/i,
-  /\bskywork-o1\b/i,
-  /\bexaone-deep\b/i,
-  /\bphi-4-reasoning\b/i,
   // OpenAI reasoning models
   /\bo1\b/i,
   /\bo3\b/i,

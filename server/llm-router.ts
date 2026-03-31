@@ -152,7 +152,6 @@ export class LlmRouter {
       models?: Array<{
         name: string;
         modified_at?: string;
-        capabilities?: string[];
         details?: {
           family?: string;
           families?: string[];
@@ -163,8 +162,19 @@ export class LlmRouter {
       }>;
     };
 
-    return (data.models ?? []).map((m) => {
+    const models = data.models ?? [];
+
+    // Fetch capabilities from /show for each model in parallel
+    const metaResults = await Promise.allSettled(
+      models.map((m) => fetchOllamaModelMeta(config.baseUrl, m.name))
+    );
+
+    return models.map((m, i) => {
       this.modelProviderMap.set(m.name, config);
+      const meta =
+        metaResults[i].status === "fulfilled"
+          ? metaResults[i].value
+          : undefined;
       return {
         name: m.name,
         provider: config.id,
@@ -174,7 +184,7 @@ export class LlmRouter {
         parameterSize: m.details?.parameter_size,
         format: m.details?.format,
         quantizationLevel: m.details?.quantization_level,
-        capabilities: m.capabilities,
+        capabilities: meta?.capabilities,
       };
     });
   }
