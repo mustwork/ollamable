@@ -11,6 +11,7 @@ import type {
 export const STORAGE_KEY = "ollamable.conversations";
 export const SELECTED_KEY = "ollamable.selectedConversationId";
 export const SIDEBAR_STATE_KEY = "ollamable.sidebarState";
+export const CONVERSATION_ORDER_KEY = "ollamable.conversationOrder";
 
 export interface SidebarState {
   sidebarOpen: boolean;
@@ -139,6 +140,20 @@ export function inferTitle(steps: ConversationStep[]): string {
 
 export function saveConversations(conversations: Conversation[]): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+}
+
+export function loadConversationOrder(): string[] | null {
+  const raw = window.localStorage.getItem(CONVERSATION_ORDER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as string[];
+  } catch {
+    return null;
+  }
+}
+
+export function saveConversationOrder(order: string[]): void {
+  window.localStorage.setItem(CONVERSATION_ORDER_KEY, JSON.stringify(order));
 }
 
 export function ensureSystemPromptStep(conversation: Conversation): Conversation {

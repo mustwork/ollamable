@@ -1,6 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Joyride, ACTIONS, EVENTS, STATUS, type EventData } from "react-joyride";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,6 +54,7 @@ import {
 import { alpha, useTheme, type Theme } from "@mui/material/styles";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import GitHubIcon from "@mui/icons-material/GitHub";
 import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
@@ -62,9 +78,11 @@ import {
   formatTimestamp,
   inferTitle,
   loadConversations,
+  loadConversationOrder,
   loadSelectedConversationId,
   loadSidebarState,
   saveConversations,
+  saveConversationOrder,
   saveSelectedConversationId,
   saveSidebarState,
   SYSTEM_PROMPT_EXAMPLES,
@@ -91,6 +109,251 @@ const SIDEBAR_COLLAPSED_WIDTH = 44;
 const RIGHT_SIDEBAR_WIDTH = 360;
 const TEMPERATURE_OPTIONS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0];
 
+interface SortableConversationCardProps {
+  conversation: Conversation;
+  index: number;
+  isSelected: boolean;
+  isEditingTitle: boolean;
+  isEditingNote: boolean;
+  titleDraft: string;
+  noteDraft: string;
+  onSelect: () => void;
+  onViewJson: (e: React.MouseEvent) => void;
+  onDelete: (e: React.MouseEvent) => void;
+  onTitleChange: (value: string) => void;
+  onTitleSave: () => void;
+  onTitleCancel: () => void;
+  onTitleEdit: () => void;
+  onNoteChange: (value: string) => void;
+  onNoteSave: () => void;
+  onNoteEdit: () => void;
+}
+
+function SortableConversationCard({
+  conversation,
+  index,
+  isSelected,
+  isEditingTitle,
+  isEditingNote,
+  titleDraft,
+  noteDraft,
+  onSelect,
+  onViewJson,
+  onDelete,
+  onTitleChange,
+  onTitleSave,
+  onTitleCancel,
+  onTitleEdit,
+  onNoteChange,
+  onNoteSave,
+  onNoteEdit,
+}: SortableConversationCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: conversation.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1 : undefined,
+  };
+
+  return (
+    <Paper
+      ref={setNodeRef}
+      style={style}
+      variant="outlined"
+      {...(index === 0 ? { "data-tour": "conversation-card" } : {})}
+      sx={{
+        mb: 0.5,
+        p: 1.5,
+        cursor: "pointer",
+        position: "relative",
+        "&:hover .conversation-actions": { opacity: 1 },
+        "&:hover .drag-handle": { opacity: 1 },
+        ...(isSelected
+          ? {
+              borderColor: "primary.main",
+              bgcolor: "action.selected",
+            }
+          : {}),
+      }}
+      onClick={onSelect}
+    >
+      <Box
+        className="drag-handle"
+        {...attributes}
+        {...listeners}
+        sx={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          bottom: 0,
+          width: 18,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: 0,
+          transition: "opacity 0.15s ease",
+          cursor: "grab",
+          color: "text.disabled",
+          "&:active": { cursor: "grabbing" },
+        }}
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      >
+        <DragIndicatorIcon sx={{ fontSize: 14 }} />
+      </Box>
+      <IconButton
+        className="conversation-actions"
+        size="small"
+        onClick={onViewJson}
+        aria-label="View request JSON"
+        sx={{ position: "absolute", top: 4, right: 4, opacity: 0, transition: "opacity 0.15s ease" }}
+      >
+        <VisibilityOutlinedIcon sx={{ fontSize: 14 }} />
+      </IconButton>
+      <IconButton
+        className="conversation-actions"
+        size="small"
+        onClick={onDelete}
+        aria-label={`Delete conversation ${conversation.title}`}
+        sx={{ position: "absolute", bottom: 4, right: 4, opacity: 0, transition: "opacity 0.15s ease" }}
+      >
+        <DeleteOutlinedIcon sx={{ fontSize: 14 }} />
+      </IconButton>
+      {isEditingTitle ? (
+        <input
+          value={titleDraft}
+          onChange={(event) => onTitleChange(event.target.value)}
+          onBlur={onTitleSave}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onTitleSave();
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onTitleCancel();
+            }
+          }}
+          onClick={(event) => event.stopPropagation()}
+          autoFocus
+          style={{
+            font: "inherit",
+            fontSize: "0.875rem",
+            fontWeight: 600,
+            lineHeight: 1.43,
+            letterSpacing: "0.01071em",
+            color: "inherit",
+            background: "none",
+            border: "none",
+            outline: "none",
+            padding: 0,
+            margin: 0,
+            width: "100%",
+            boxSizing: "border-box",
+            height: "1.25rem",
+          }}
+        />
+      ) : (
+        <Typography
+          variant="body2"
+          fontWeight={600}
+          onClick={(e) => {
+            if (isSelected) {
+              e.stopPropagation();
+              onTitleEdit();
+            }
+          }}
+          sx={{
+            cursor: isSelected ? "text" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            "& .edit-pencil": { opacity: 0, transition: "opacity 0.15s ease" },
+            "&:hover .edit-pencil": { opacity: 1 },
+          }}
+        >
+          {conversation.title}
+          {isSelected && (
+            <EditOutlinedIcon className="edit-pencil" sx={{ fontSize: 12, color: "text.secondary", flexShrink: 0 }} />
+          )}
+        </Typography>
+      )}
+      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+        {(() => {
+          const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
+          const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
+          const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
+          const tokens = input + output;
+          return <>{msgs} messages • {formatTimestamp(conversation.updatedAt)}{tokens > 0 ? <><br />{tokens.toLocaleString()} tokens</> : null}</>;
+        })()}
+      </Typography>
+      {isSelected && (
+        isEditingNote || !conversation.note ? (
+          <textarea
+            value={noteDraft}
+            onChange={(e) => onNoteChange(e.target.value)}
+            onBlur={onNoteSave}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                onNoteSave();
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus={isEditingNote}
+            rows={2}
+            placeholder="Add a note..."
+            style={{
+              font: "inherit",
+              fontSize: "0.75rem",
+              lineHeight: 1.4,
+              color: "inherit",
+              background: "rgba(128,128,128,0.1)",
+              border: "1px solid rgba(128,128,128,0.3)",
+              borderRadius: 4,
+              outline: "none",
+              padding: 6,
+              marginTop: 4,
+              width: "100%",
+              boxSizing: "border-box",
+              resize: "vertical",
+            }}
+          />
+        ) : (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            onClick={(e) => { e.stopPropagation(); onNoteEdit(); }}
+            sx={{
+              mt: 0.5,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 0.5,
+              fontStyle: "italic",
+              cursor: "text",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              "& .edit-pencil": { opacity: 0, transition: "opacity 0.15s ease" },
+              "&:hover .edit-pencil": { opacity: 1 },
+            }}
+          >
+            {conversation.note}
+            <EditOutlinedIcon className="edit-pencil" sx={{ fontSize: 12, color: "text.secondary", flexShrink: 0, mt: "2px" }} />
+          </Typography>
+        )
+      )}
+    </Paper>
+  );
+}
+
 export function ChatWorkspace() {
   const theme = useTheme();
   const [models, setModels] = useState<OllamaModel[]>(fallbackModels);
@@ -98,6 +361,7 @@ export function ChatWorkspace() {
   modelsRef.current = models;
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationOrder, setConversationOrder] = useState<string[] | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string>("");
   const [composerValue, setComposerValue] = useState("");
   const [toolSearch, setToolSearch] = useState("");
@@ -506,6 +770,7 @@ export function ChatWorkspace() {
     const selectedId = loadSelectedConversationId() ?? initialConversations[0]?.id ?? "";
 
     setConversations(initialConversations);
+    setConversationOrder(loadConversationOrder());
     setSelectedConversationId(selectedId);
   }, []);
 
@@ -722,6 +987,41 @@ export function ChatWorkspace() {
     );
   }
 
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const visibleConversations = useMemo(() => {
+    const filtered = conversations.filter((c) => c.steps.some((s) => s.kind === "user"));
+    if (!conversationOrder) return filtered;
+    const byId = new Map(filtered.map((c) => [c.id, c]));
+    const ordered: Conversation[] = [];
+    for (const id of conversationOrder) {
+      const c = byId.get(id);
+      if (c) {
+        ordered.push(c);
+        byId.delete(id);
+      }
+    }
+    // Append any conversations not in the saved order (new ones) at the top
+    for (const c of filtered) {
+      if (byId.has(c.id)) ordered.unshift(c);
+    }
+    return ordered;
+  }, [conversations, conversationOrder]);
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = visibleConversations.findIndex((c) => c.id === active.id);
+    const newIndex = visibleConversations.findIndex((c) => c.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(visibleConversations, oldIndex, newIndex);
+    const newOrder = reordered.map((c) => c.id);
+    setConversationOrder(newOrder);
+    saveConversationOrder(newOrder);
+  }
+
   function handleCreateConversation() {
     const firstModel = availableModels[0];
     const model = firstModel?.name ?? fallbackModels[0].name;
@@ -752,6 +1052,13 @@ export function ChatWorkspace() {
       }
 
       return remaining;
+    });
+
+    setConversationOrder((current) => {
+      if (!current) return current;
+      const updated = current.filter((cid) => cid !== id);
+      saveConversationOrder(updated);
+      return updated;
     });
   }
 
@@ -1459,169 +1766,32 @@ export function ChatWorkspace() {
               pointerEvents: sidebarOpen ? "auto" : "none",
             }}>
               <List sx={{ p: 0, overflowY: "auto", flexGrow: 1, scrollbarGutter: "stable", pr: 1 }}>
-            {conversations.filter((c) => c.steps.some((s) => s.kind === "user")).map((conversation, index) => (
-              <Paper
+            <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={visibleConversations.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+            {visibleConversations.map((conversation, index) => (
+              <SortableConversationCard
                 key={conversation.id}
-                variant="outlined"
-                {...(index === 0 ? { "data-tour": "conversation-card" } : {})}
-                sx={{
-                  mb: 0.5,
-                  p: 1.5,
-                  cursor: "pointer",
-                  position: "relative",
-                  "&:hover .conversation-actions": { opacity: 1 },
-                  ...(conversation.id === selectedConversationId
-                    ? {
-                        borderColor: "primary.main",
-                        bgcolor: "action.selected",
-                      }
-                    : {}),
-                }}
-                onClick={() => setSelectedConversationId(conversation.id)}
-              >
-                <IconButton
-                  className="conversation-actions"
-                  size="small"
-                  onClick={(e) => { e.stopPropagation(); setRequestJsonOpen(true); }}
-                  aria-label="View request JSON"
-                  sx={{ position: "absolute", top: 4, right: 4, opacity: 0, transition: "opacity 0.15s ease" }}
-                >
-                  <VisibilityOutlinedIcon sx={{ fontSize: 14 }} />
-                </IconButton>
-                <IconButton
-                  className="conversation-actions"
-                  size="small"
-                  onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(conversation.id); }}
-                  aria-label={`Delete conversation ${conversation.title}`}
-                  sx={{ position: "absolute", bottom: 4, right: 4, opacity: 0, transition: "opacity 0.15s ease" }}
-                >
-                  <DeleteOutlinedIcon sx={{ fontSize: 14 }} />
-                </IconButton>
-                {editingConversationId === conversation.id ? (
-                  <input
-                    value={titleDraft}
-                    onChange={(event) => setTitleDraft(event.target.value)}
-                    onBlur={() => handleSaveTitle(conversation.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        handleSaveTitle(conversation.id);
-                      }
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        handleCancelTitleEdit();
-                      }
-                    }}
-                    onClick={(event) => event.stopPropagation()}
-                    autoFocus
-                    style={{
-                      font: "inherit",
-                      fontSize: "0.875rem",
-                      fontWeight: 600,
-                      lineHeight: 1.43,
-                      letterSpacing: "0.01071em",
-                      color: "inherit",
-                      background: "none",
-                      border: "none",
-                      outline: "none",
-                      padding: 0,
-                      margin: 0,
-                      width: "100%",
-                      boxSizing: "border-box",
-                      height: "1.25rem",
-                    }}
-                  />
-                ) : (
-                  <Typography
-                    variant="body2"
-                    fontWeight={600}
-                    onClick={(e) => {
-                      if (conversation.id === selectedConversationId) {
-                        e.stopPropagation();
-                        handleStartTitleEdit(conversation);
-                      }
-                    }}
-                    sx={{
-                      cursor: conversation.id === selectedConversationId ? "text" : "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 0.5,
-                      "& .edit-pencil": { opacity: 0, transition: "opacity 0.15s ease" },
-                      "&:hover .edit-pencil": { opacity: 1 },
-                    }}
-                  >
-                    {conversation.title}
-                    {conversation.id === selectedConversationId && (
-                      <EditOutlinedIcon className="edit-pencil" sx={{ fontSize: 12, color: "text.secondary", flexShrink: 0 }} />
-                    )}
-                  </Typography>
-                )}
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                  {(() => {
-                    const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
-                    const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
-                    const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
-                    const tokens = input + output;
-                    return <>{msgs} messages • {formatTimestamp(conversation.updatedAt)}{tokens > 0 ? <><br />{tokens.toLocaleString()} tokens</> : null}</>;
-                  })()}
-                </Typography>
-                {conversation.id === selectedConversationId && (
-                  editingNoteId === conversation.id || !conversation.note ? (
-                    <textarea
-                      value={noteDraft}
-                      onChange={(e) => setNoteDraft(e.target.value)}
-                      onBlur={() => handleSaveNote(conversation.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          e.preventDefault();
-                          handleSaveNote(conversation.id);
-                        }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      autoFocus={editingNoteId === conversation.id}
-                      rows={2}
-                      placeholder="Add a note..."
-                      style={{
-                        font: "inherit",
-                        fontSize: "0.75rem",
-                        lineHeight: 1.4,
-                        color: "inherit",
-                        background: "rgba(128,128,128,0.1)",
-                        border: "1px solid rgba(128,128,128,0.3)",
-                        borderRadius: 4,
-                        outline: "none",
-                        padding: 6,
-                        marginTop: 4,
-                        width: "100%",
-                        boxSizing: "border-box",
-                        resize: "vertical",
-                      }}
-                    />
-                  ) : (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      onClick={(e) => { e.stopPropagation(); handleStartNoteEdit(conversation); }}
-                      sx={{
-                        mt: 0.5,
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 0.5,
-                        fontStyle: "italic",
-                        cursor: "text",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        "& .edit-pencil": { opacity: 0, transition: "opacity 0.15s ease" },
-                        "&:hover .edit-pencil": { opacity: 1 },
-                      }}
-                    >
-                      {conversation.note}
-                      <EditOutlinedIcon className="edit-pencil" sx={{ fontSize: 12, color: "text.secondary", flexShrink: 0, mt: "2px" }} />
-                    </Typography>
-                  )
-                )}
-              </Paper>
+                conversation={conversation}
+                index={index}
+                isSelected={conversation.id === selectedConversationId}
+                isEditingTitle={editingConversationId === conversation.id}
+                isEditingNote={editingNoteId === conversation.id}
+                titleDraft={titleDraft}
+                noteDraft={noteDraft}
+                onSelect={() => setSelectedConversationId(conversation.id)}
+                onViewJson={(e) => { e.stopPropagation(); setRequestJsonOpen(true); }}
+                onDelete={(e) => { e.stopPropagation(); setDeleteConfirmId(conversation.id); }}
+                onTitleChange={(v) => setTitleDraft(v)}
+                onTitleSave={() => handleSaveTitle(conversation.id)}
+                onTitleCancel={handleCancelTitleEdit}
+                onTitleEdit={() => handleStartTitleEdit(conversation)}
+                onNoteChange={(v) => setNoteDraft(v)}
+                onNoteSave={() => handleSaveNote(conversation.id)}
+                onNoteEdit={() => handleStartNoteEdit(conversation)}
+              />
             ))}
+              </SortableContext>
+            </DndContext>
           </List>
             </Box>
           </Box>
