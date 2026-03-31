@@ -32,6 +32,8 @@ export interface SidebarState {
   collapseTools: boolean;
   /** Collapse harness & meta (server) steps by default */
   collapseServerMessages: boolean;
+  /** Hide the system prompt text field */
+  hideSystemPrompt: boolean;
   /** Per-subsection collapse: key = "builtin" | "mcp-{serverName}" | provider name */
   subsections: Record<string, boolean>;
 }
@@ -51,6 +53,7 @@ const DEFAULT_SIDEBAR_STATE: SidebarState = {
   collapseToolCalls: false,
   collapseTools: true,
   collapseServerMessages: false,
+  hideSystemPrompt: false,
   subsections: {},
 };
 

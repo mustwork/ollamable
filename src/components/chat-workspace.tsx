@@ -384,6 +384,7 @@ export function ChatWorkspace() {
     collapseToolCalls: false,
     collapseTools: true,
     collapseServerMessages: false,
+    hideSystemPrompt: false,
     subsections: {},
   });
 
@@ -415,6 +416,7 @@ export function ChatWorkspace() {
     collapseToolCalls,
     collapseTools,
     collapseServerMessages,
+    hideSystemPrompt,
     subsections,
   } = sidebarState;
 
@@ -1828,6 +1830,7 @@ export function ChatWorkspace() {
                 <Stack spacing={2} sx={{ pt: 1, pb: 1, maxWidth: sidebarOpen && rightSidebarOpen ? 900 : 700, mx: "auto", transition: "max-width 0.35s ease" }}>
                   {error ? <Alert severity="warning">{error}</Alert> : null}
 
+                  {!hideSystemPrompt && (
                   <TextField
                     data-tour="system-prompt"
                     label="System prompt"
@@ -1841,8 +1844,9 @@ export function ChatWorkspace() {
                     placeholder="No system prompt set."
                     sx={{ width: "100%" }}
                   />
+                  )}
 
-                  {showExamples && !selectedConversation.steps.some((s) => s.kind === "user") ? (
+                  {!hideSystemPrompt && showExamples && !selectedConversation.steps.some((s) => s.kind === "user") ? (
                     <Stack data-testid="system-prompt-examples" spacing={1}>
                       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                         {SYSTEM_PROMPT_EXAMPLES.map((example) => (
@@ -2634,6 +2638,20 @@ export function ChatWorkspace() {
                             />
                           }
                           label={<Typography variant="body2">Show tour</Typography>}
+                        />
+
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, mb: 0.5 }}>
+                          Hide
+                        </Typography>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={hideSystemPrompt}
+                              onChange={() => updateSidebar({ hideSystemPrompt: !hideSystemPrompt })}
+                              size="small"
+                            />
+                          }
+                          label={<Typography variant="body2">System prompt</Typography>}
                         />
 
                         <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, mb: 0.5 }}>
