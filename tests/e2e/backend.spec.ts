@@ -17,14 +17,13 @@ const mockModels = {
   models: [
     {
       name: "qwen3:latest",
-      modified_at: "2026-03-20T11:00:00.000Z",
-      details: {
-        format: "gguf",
-        family: "qwen",
-        families: ["qwen"],
-        parameter_size: "8B",
-        quantization_level: "Q4_K_M",
-      },
+      provider: "ollama",
+      providerName: "Ollama",
+      format: "gguf",
+      family: "qwen",
+      families: ["qwen"],
+      parameterSize: "8B",
+      quantizationLevel: "Q4_K_M",
     },
   ],
 };
@@ -68,8 +67,8 @@ test.beforeEach(async ({ page }) => {
     window.localStorage.setItem("ollamable.tourCompleted", "true");
   });
 
-  // Model list is still fetched directly by the frontend.
-  await page.route("http://localhost:11434/api/tags", async (route) => {
+  // The unified server derives API URLs from window.location, so match any origin.
+  await page.route("**/models", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -77,7 +76,7 @@ test.beforeEach(async ({ page }) => {
     });
   });
 
-  await page.route("http://localhost:3001/tools", async (route) => {
+  await page.route("**/tools", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -86,7 +85,7 @@ test.beforeEach(async ({ page }) => {
   });
 
   // Intercept WebSocket connection to our mock backend.
-  await page.routeWebSocket("ws://localhost:3001", (ws) => {
+  await page.routeWebSocket(/ws/, (ws) => {
     wsServer = ws;
     ws.onMessage((raw) => {
       try {

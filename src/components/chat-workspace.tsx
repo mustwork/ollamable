@@ -1672,6 +1672,7 @@ export function ChatWorkspace() {
                           return baseMeta;
                         })()}
                         bgColor={hasToolCalls ? getStepBackgroundColor("tool_call", theme) : undefined}
+                        onDoubleClickContent={step.kind === "user" && !streaming && editingStepId !== step.id ? () => handleStartStepEdit(step) : undefined}
                         footerActions={
                           step.kind === "user" ? (
                             <>
@@ -2717,6 +2718,7 @@ interface StepCardProps {
   children: React.ReactNode;
   dataTour?: string;
   bgColor?: string;
+  onDoubleClickContent?: () => void;
 }
 
 function StepCard({
@@ -2730,6 +2732,7 @@ function StepCard({
   children,
   dataTour,
   bgColor,
+  onDoubleClickContent,
 }: StepCardProps) {
   const theme = useTheme();
   const card = (
@@ -2761,7 +2764,7 @@ function StepCard({
         {expanded ? <ExpandLessOutlinedIcon/> : <ExpandMoreOutlinedIcon/>}
       </ListItemButton>
       <Collapse in={expanded}>
-        <Box sx={{ p: 2.5 }}>
+        <Box sx={{ p: 2.5, cursor: onDoubleClickContent ? "pointer" : undefined }} onDoubleClick={onDoubleClickContent}>
           {children}
           {(footerMeta || footerActions) ? (
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 1.5 }}>

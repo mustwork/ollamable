@@ -72,36 +72,33 @@ const mockModels = {
   models: [
     {
       name: "qwen3:latest",
-      modified_at: "2026-03-20T11:00:00.000Z",
-      details: {
-        format: "gguf",
-        family: "qwen",
-        families: ["qwen"],
-        parameter_size: "8B",
-        quantization_level: "Q4_K_M",
-      },
+      provider: "ollama",
+      providerName: "Ollama",
+      format: "gguf",
+      family: "qwen",
+      families: ["qwen"],
+      parameterSize: "8B",
+      quantizationLevel: "Q4_K_M",
     },
     {
       name: "llama3.2:latest",
-      modified_at: "2026-03-20T10:00:00.000Z",
-      details: {
-        format: "gguf",
-        family: "llama",
-        families: ["llama"],
-        parameter_size: "3B",
-        quantization_level: "Q4_K_M",
-      },
+      provider: "ollama",
+      providerName: "Ollama",
+      format: "gguf",
+      family: "llama",
+      families: ["llama"],
+      parameterSize: "3B",
+      quantizationLevel: "Q4_K_M",
     },
     {
       name: "nomic-embed-text:latest",
-      modified_at: "2026-03-20T09:00:00.000Z",
-      details: {
-        format: "gguf",
-        family: "bert",
-        families: ["bert"],
-        parameter_size: "768D",
-        quantization_level: "F16",
-      },
+      provider: "ollama",
+      providerName: "Ollama",
+      format: "gguf",
+      family: "bert",
+      families: ["bert"],
+      parameterSize: "768D",
+      quantizationLevel: "F16",
     },
   ],
 };
@@ -163,7 +160,8 @@ test.beforeEach(async ({ page }) => {
     window.localStorage.setItem("ollamable.tourCompleted", "true");
   });
 
-  await page.route("http://localhost:11434/api/tags", async (route) => {
+  // The unified server derives API URLs from window.location, so match any origin.
+  await page.route("**/models", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -171,7 +169,7 @@ test.beforeEach(async ({ page }) => {
     });
   });
 
-  await page.route("http://localhost:3001/tools", async (route) => {
+  await page.route("**/tools", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -180,7 +178,7 @@ test.beforeEach(async ({ page }) => {
   });
 
   // Intercept WebSocket so the frontend sees wsConnected === true.
-  await page.routeWebSocket("ws://localhost:3001", (ws) => {
+  await page.routeWebSocket(/ws/, (ws) => {
     ws.onMessage((raw) => {
       try {
         const data = JSON.parse(raw.toString()) as Record<string, unknown>;
