@@ -51,6 +51,7 @@ import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
 import TourOutlinedIcon from "@mui/icons-material/TourOutlined";
+import NoteOutlinedIcon from "@mui/icons-material/NoteOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
 import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, StepKind, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
@@ -222,6 +223,8 @@ export function ChatWorkspace() {
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [stepDraft, setStepDraft] = useState("");
   const [inspectStep, setInspectStep] = useState<ConversationStep | null>(null);
@@ -740,6 +743,10 @@ export function ChatWorkspace() {
         handleCancelTitleEdit();
       }
 
+      if (editingNoteId === id) {
+        handleCancelNoteEdit();
+      }
+
       if (selectedConversationId === id) {
         handleCancelStepEdit();
       }
@@ -825,6 +832,25 @@ export function ChatWorkspace() {
   function handleCancelTitleEdit() {
     setEditingConversationId(null);
     setTitleDraft("");
+  }
+
+  function handleStartNoteEdit(conversation: Conversation) {
+    setEditingNoteId(conversation.id);
+    setNoteDraft(conversation.note ?? "");
+  }
+
+  function handleCancelNoteEdit() {
+    setEditingNoteId(null);
+    setNoteDraft("");
+  }
+
+  function handleSaveNote(id: string) {
+    updateConversation(id, (conversation) => ({
+      ...conversation,
+      note: noteDraft,
+      updatedAt: new Date().toISOString(),
+    }));
+    handleCancelNoteEdit();
   }
 
   function handleStartStepEdit(step: ConversationStep) {
@@ -1520,15 +1546,81 @@ export function ChatWorkspace() {
                     {conversation.title}
                   </Typography>
                 )}
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                  {(() => {
-                    const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
-                    const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
-                    const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
-                    const tokens = input + output;
-                    return <>{msgs} messages • {formatTimestamp(conversation.updatedAt)}{tokens > 0 ? <><br />{tokens.toLocaleString()} tokens</> : null}</>;
-                  })()}
-                </Typography>
+                <Box sx={{ display: "flex", alignItems: "flex-start", mt: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1 }}>
+                    {(() => {
+                      const msgs = conversation.steps.filter((s) => s.kind === "user" || s.kind === "assistant").length;
+                      const input = conversation.steps.reduce((sum, s) => sum + (s.usage?.inputTokens ?? 0), 0);
+                      const output = conversation.steps.reduce((sum, s) => sum + (s.usage?.outputTokens ?? 0), 0);
+                      const tokens = input + output;
+                      return <>{msgs} messages • {formatTimestamp(conversation.updatedAt)}{tokens > 0 ? <><br />{tokens.toLocaleString()} tokens</> : null}</>;
+                    })()}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (editingNoteId === conversation.id) {
+                        handleSaveNote(conversation.id);
+                      } else {
+                        handleStartNoteEdit(conversation);
+                      }
+                    }}
+                    aria-label="Edit note"
+                    sx={{ ml: 0.5, mt: -0.5, color: conversation.note ? "primary.main" : "text.disabled" }}
+                  >
+                    <NoteOutlinedIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Box>
+                {conversation.id === selectedConversationId && editingNoteId === conversation.id && (
+                  <textarea
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onBlur={() => handleSaveNote(conversation.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        handleCancelNoteEdit();
+                      }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    autoFocus
+                    rows={3}
+                    placeholder="Add a note..."
+                    style={{
+                      font: "inherit",
+                      fontSize: "0.75rem",
+                      lineHeight: 1.4,
+                      color: "inherit",
+                      background: "rgba(128,128,128,0.1)",
+                      border: "1px solid rgba(128,128,128,0.3)",
+                      borderRadius: 4,
+                      outline: "none",
+                      padding: 6,
+                      marginTop: 4,
+                      width: "100%",
+                      boxSizing: "border-box",
+                      resize: "vertical",
+                    }}
+                  />
+                )}
+                {conversation.id === selectedConversationId && editingNoteId !== conversation.id && conversation.note && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    onClick={(e) => { e.stopPropagation(); handleStartNoteEdit(conversation); }}
+                    sx={{
+                      mt: 0.5,
+                      display: "block",
+                      fontStyle: "italic",
+                      cursor: "text",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {conversation.note}
+                  </Typography>
+                )}
               </Paper>
             ))}
           </List>

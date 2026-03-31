@@ -75,6 +75,7 @@ export interface Conversation {
   availableTools: ToolDefinition[];
   activeToolIds: string[];
   steps: ConversationStep[];
+  note?: string;
   _tourExample?: boolean;
 }
 
