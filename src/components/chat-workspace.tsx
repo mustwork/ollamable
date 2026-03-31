@@ -897,6 +897,16 @@ export function ChatWorkspace() {
     () => selectedConversation?.steps.filter(isVisibleTranscriptStep) ?? [],
     [selectedConversation]
   );
+  const lastDeletableStepId = useMemo(() => {
+    if (!selectedConversation || streaming) return null;
+    const steps = selectedConversation.steps;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].kind === "user" || steps[i].kind === "assistant") {
+        return steps[i].id;
+      }
+    }
+    return null;
+  }, [selectedConversation, streaming]);
   const requestJsonPreview = useMemo(() => {
     if (!selectedConversation) {
       return "";
@@ -1380,6 +1390,52 @@ export function ChatWorkspace() {
 
     handleCancelStepEdit();
     await streamConversationResponse(nextConversation);
+  }
+
+  function handleDeleteLastExchange() {
+    if (!selectedConversation || streaming) {
+      return;
+    }
+
+    const steps = selectedConversation.steps;
+    // Find the last user or assistant visible step
+    let lastDeletableIndex = -1;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].kind === "user" || steps[i].kind === "assistant") {
+        lastDeletableIndex = i;
+        break;
+      }
+    }
+    if (lastDeletableIndex === -1) {
+      return;
+    }
+
+    const lastDeletable = steps[lastDeletableIndex];
+    let cutIndex: number;
+
+    if (lastDeletable.kind === "user") {
+      // No assistant response yet — just remove this user message
+      cutIndex = lastDeletableIndex;
+    } else {
+      // Assistant message — remove all response steps after the last user message
+      // but keep the user message itself
+      cutIndex = lastDeletableIndex;
+      for (let i = lastDeletableIndex - 1; i >= 0; i--) {
+        if (steps[i].kind === "user") {
+          cutIndex = i + 1;
+          break;
+        }
+        if (steps[i].kind === "system") {
+          break;
+        }
+      }
+    }
+
+    updateConversation(selectedConversation.id, (conv) => ({
+      ...conv,
+      steps: conv.steps.slice(0, cutIndex),
+      updatedAt: new Date().toISOString(),
+    }));
   }
 
   async function handleResendUserStep(stepId: string) {
@@ -1964,6 +2020,15 @@ export function ChatWorkspace() {
                               >
                                 <ReplayOutlinedIcon fontSize="small" />
                               </IconButton>
+                              {step.id === lastDeletableStepId && (
+                                <IconButton
+                                  size="small"
+                                  onClick={handleDeleteLastExchange}
+                                  aria-label="Delete message"
+                                >
+                                  <DeleteOutlinedIcon fontSize="small" />
+                                </IconButton>
+                              )}
                             </>
                           ) : step.kind === "assistant" && !hasToolCalls ? (
                             <>
@@ -1982,6 +2047,15 @@ export function ChatWorkspace() {
                               >
                                 <ReplayOutlinedIcon fontSize="small" />
                               </IconButton>
+                              {step.id === lastDeletableStepId && (
+                                <IconButton
+                                  size="small"
+                                  onClick={handleDeleteLastExchange}
+                                  aria-label="Delete message"
+                                >
+                                  <DeleteOutlinedIcon fontSize="small" />
+                                </IconButton>
+                              )}
                             </>
                           ) : undefined
                         }

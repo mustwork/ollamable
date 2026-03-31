@@ -789,3 +789,108 @@ test("reasoning steps stay collapsed after streaming when collapseReasoning is e
     page.locator('[data-step-kind="reasoning"]').getByText("I should show my reasoning as a separate step.")
   ).toBeHidden();
 });
+
+// ── Delete last message ─────────────────────────────────────────────
+
+test("deleting the last assistant message removes only the response, keeps the user message and earlier exchanges", async ({
+  page,
+}) => {
+  const now = "2026-03-20T11:00:00.000Z";
+  await seedConversationState(
+    page,
+    [
+      {
+        id: "conversation-1",
+        title: "Delete test",
+        titleEdited: false,
+        model: "qwen3:latest",
+        systemPrompt: "",
+        createdAt: now,
+        updatedAt: now,
+        availableTools: [],
+        activeToolIds: [],
+        steps: [
+          { id: "system-1", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+          { id: "user-1", kind: "user", title: "User", content: "First question", createdAt: now, expanded: true },
+          { id: "reasoning-1", kind: "reasoning", title: "Reasoning", content: "Thinking about first", createdAt: now, expanded: true },
+          { id: "assistant-1", kind: "assistant", title: "Assistant", content: "First answer", createdAt: now, expanded: true },
+          { id: "user-2", kind: "user", title: "User", content: "Second question", createdAt: now, expanded: true },
+          { id: "reasoning-2", kind: "reasoning", title: "Reasoning", content: "Thinking about second", createdAt: now, expanded: true },
+          { id: "assistant-2", kind: "assistant", title: "Assistant", content: "Second answer", createdAt: now, expanded: true },
+        ],
+      },
+    ],
+    "conversation-1"
+  );
+
+  await page.goto("/");
+
+  // Both exchanges should be visible
+  await expect(page.getByText("First question")).toBeVisible();
+  await expect(page.getByText("First answer")).toBeVisible();
+  await expect(page.getByText("Second question")).toBeVisible();
+  await expect(page.getByText("Second answer")).toBeVisible();
+
+  // The delete button should appear on the last assistant step
+  const lastAssistant = page.locator('[data-step-kind="assistant"]').last();
+  await lastAssistant.getByRole("button", { name: "Delete message" }).click();
+
+  // The second response (reasoning + assistant) should be removed
+  await expect(page.getByText("Second answer")).toHaveCount(0);
+  await expect(page.getByText("Thinking about second")).toHaveCount(0);
+
+  // The user message that triggered it should still be there
+  await expect(page.getByText("Second question")).toBeVisible();
+
+  // The first exchange should be untouched
+  await expect(page.getByText("First question")).toBeVisible();
+  await expect(page.getByText("First answer")).toBeVisible();
+
+  // The conversation should still be in the sidebar
+  await expect(page.getByText("Delete test").first()).toBeVisible();
+});
+
+test("deleting the last user message (no assistant response) removes only that message", async ({
+  page,
+}) => {
+  const now = "2026-03-20T11:00:00.000Z";
+  await seedConversationState(
+    page,
+    [
+      {
+        id: "conversation-1",
+        title: "Delete user test",
+        titleEdited: false,
+        model: "qwen3:latest",
+        systemPrompt: "",
+        createdAt: now,
+        updatedAt: now,
+        availableTools: [],
+        activeToolIds: [],
+        steps: [
+          { id: "system-1", kind: "system", title: "System Prompt", content: "", createdAt: now, expanded: true },
+          { id: "user-1", kind: "user", title: "User", content: "First question", createdAt: now, expanded: true },
+          { id: "assistant-1", kind: "assistant", title: "Assistant", content: "First answer", createdAt: now, expanded: true },
+          { id: "user-2", kind: "user", title: "User", content: "Pending question", createdAt: now, expanded: true },
+        ],
+      },
+    ],
+    "conversation-1"
+  );
+
+  await page.goto("/");
+
+  // The pending user message should have a delete button
+  const lastUser = page.locator('[data-step-kind="user"]').last();
+  await lastUser.getByRole("button", { name: "Delete message" }).click();
+
+  // The pending user message should be gone
+  await expect(page.getByText("Pending question")).toHaveCount(0);
+
+  // The first exchange should remain
+  await expect(page.getByText("First question")).toBeVisible();
+  await expect(page.getByText("First answer")).toBeVisible();
+
+  // Conversation still in sidebar
+  await expect(page.getByText("Delete user test").first()).toBeVisible();
+});
