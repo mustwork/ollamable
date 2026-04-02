@@ -66,6 +66,8 @@ import ReplayOutlinedIcon from "@mui/icons-material/ReplayOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
+import ThermostatOutlinedIcon from "@mui/icons-material/ThermostatOutlined";
+import TokenOutlinedIcon from "@mui/icons-material/TokenOutlined";
 import TourOutlinedIcon from "@mui/icons-material/TourOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
 import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, StepKind, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
@@ -1684,16 +1686,79 @@ export function ChatWorkspace() {
             </Typography>
           </Box>
           {selectedConversation ? (
-            <Chip
-              data-tour="model-chip"
-              icon={<MemoryOutlinedIcon />}
-              label={selectedConversation.model}
-              color="primary"
-              clickable
-              onClick={() => void handleOpenModelMeta()}
-              aria-label={`Open metadata for ${selectedConversation.model}`}
-              size="small"
-            />
+            <>
+              <Chip
+                data-tour="model-chip"
+                icon={<MemoryOutlinedIcon />}
+                label={selectedConversation.model}
+                color="primary"
+                clickable
+                onClick={() => {
+                  const match = availableModels.find(
+                    (m) =>
+                      m.name === selectedConversation.model &&
+                      m.provider === selectedConversation.provider
+                  );
+                  const subsectionKey = `model-${match?.providerName ?? "Local"}`;
+                  setSidebarState((prev) => {
+                    const next = {
+                      ...prev,
+                      rightSidebarOpen: true,
+                      modelSectionOpen: true,
+                      tempSectionOpen: false,
+                      maxTokensSectionOpen: false,
+                      toolsSectionOpen: false,
+                      clientSectionOpen: false,
+                      subsections: { ...prev.subsections, [subsectionKey]: true },
+                    };
+                    saveSidebarState(next);
+                    return next;
+                  });
+                }}
+                aria-label={`Open model settings for ${selectedConversation.model}`}
+                size="small"
+              />
+              {selectedTemperature != null ? (
+                <Chip
+                  icon={<ThermostatOutlinedIcon />}
+                  label={selectedTemperature.toFixed(1)}
+                  color="primary"
+                  clickable
+                  onClick={() =>
+                    updateSidebar({
+                      rightSidebarOpen: true,
+                      modelSectionOpen: false,
+                      tempSectionOpen: true,
+                      maxTokensSectionOpen: false,
+                      toolsSectionOpen: false,
+                      clientSectionOpen: false,
+                    })
+                  }
+                  aria-label="Open temperature settings"
+                  size="small"
+                />
+              ) : null}
+              {selectedConversation.maxOutputTokens != null ? (
+                <Chip
+                  icon={<TokenOutlinedIcon />}
+                  label={selectedConversation.maxOutputTokens}
+                  color="primary"
+                  clickable
+                  onClick={() =>
+                    updateSidebar({
+                      rightSidebarOpen: true,
+                      modelSectionOpen: false,
+                      tempSectionOpen: false,
+                      maxTokensSectionOpen: true,
+                      toolsSectionOpen: false,
+                      clientSectionOpen: false,
+                    })
+                  }
+                  aria-label="Open max output tokens settings"
+                  size="small"
+                />
+              ) : null}
+            </>
           ) : null}
           <Box data-tour="color-mode-toggle">
             <ColorModeToggle />
