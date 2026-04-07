@@ -60,6 +60,17 @@ describe("buildOpenAIRequestBody", () => {
     }
   );
 
+  it("maps 'disable' to OpenAI's 'minimal' reasoning level", () => {
+    const body = buildOpenAIRequestBody({
+      model: "gpt-5",
+      steps: [userStep],
+      tools: noTools,
+      reasoningEffort: "disable",
+    });
+
+    expect(body.reasoning_effort).toBe("minimal");
+  });
+
   it("omits reasoning_effort when not provided", () => {
     const body = buildOpenAIRequestBody({
       model: "o1",

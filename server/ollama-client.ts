@@ -88,6 +88,16 @@ export function buildOllamaChatBody(args: {
   if (temperature != null) options.temperature = temperature;
   if (maxOutputTokens != null) options.num_predict = maxOutputTokens;
 
+  // Ollama's `think` field accepts a boolean (true/false to enable/disable
+  // thinking entirely) or a string level ("low" | "medium" | "high") on
+  // models that support graded reasoning effort.
+  const thinkValue: boolean | string | undefined =
+    reasoningEffort == null
+      ? undefined
+      : reasoningEffort === "disable"
+        ? false
+        : reasoningEffort;
+
   return {
     model,
     stream,
@@ -101,7 +111,7 @@ export function buildOllamaChatBody(args: {
       },
     })),
     ...(Object.keys(options).length > 0 ? { options } : {}),
-    ...(reasoningEffort != null ? { think: reasoningEffort } : {}),
+    ...(thinkValue !== undefined ? { think: thinkValue } : {}),
   };
 }
 

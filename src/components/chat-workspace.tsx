@@ -111,7 +111,7 @@ const APP_BAR_HEIGHT = 65;
 const SIDEBAR_COLLAPSED_WIDTH = 44;
 const RIGHT_SIDEBAR_WIDTH = 360;
 const TEMPERATURE_OPTIONS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0];
-const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ["low", "medium", "high"];
+const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ["disable", "low", "medium", "high"];
 
 interface SortableConversationCardProps {
   conversation: Conversation;

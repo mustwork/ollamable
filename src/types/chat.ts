@@ -46,7 +46,7 @@ export interface UsagePayload {
   stopReason?: string;
 }
 
-export type ReasoningEffort = "low" | "medium" | "high";
+export type ReasoningEffort = "disable" | "low" | "medium" | "high";
 
 export interface ConversationStep {
   id: string;

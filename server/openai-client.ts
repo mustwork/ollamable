@@ -125,7 +125,8 @@ export async function streamOpenAIResponse(args: {
   }
 
   if (reasoningEffort != null) {
-    body.reasoning_effort = reasoningEffort;
+    // Map our "disable" semantic to OpenAI's "minimal" (gpt-5+).
+    body.reasoning_effort = reasoningEffort === "disable" ? "minimal" : reasoningEffort;
   }
 
   const response = await fetch(`${config.baseUrl}/chat/completions`, {

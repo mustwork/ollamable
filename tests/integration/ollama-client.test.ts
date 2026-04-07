@@ -43,6 +43,18 @@ describe("buildOllamaChatBody", () => {
     expect(body.think).toBe("medium");
   });
 
+  it("maps reasoningEffort 'disable' to think: false", () => {
+    const body = buildOllamaChatBody({
+      model: "qwen3:latest",
+      steps: [userStep],
+      tools: noTools,
+      stream: false,
+      reasoningEffort: "disable",
+    }) as Record<string, unknown>;
+
+    expect(body.think).toBe(false);
+  });
+
   it("includes options.temperature and options.num_predict when provided", () => {
     const body = buildOllamaChatBody({
       model: "qwen3:latest",

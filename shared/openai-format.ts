@@ -34,7 +34,7 @@ export function buildOpenAIRequestBody(args: {
   tools: FormatTool[];
   temperature?: number;
   maxOutputTokens?: number;
-  reasoningEffort?: "low" | "medium" | "high";
+  reasoningEffort?: "disable" | "low" | "medium" | "high";
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: args.model,
@@ -54,7 +54,10 @@ export function buildOpenAIRequestBody(args: {
   }
 
   if (args.reasoningEffort != null) {
-    body.reasoning_effort = args.reasoningEffort;
+    // OpenAI exposes the lowest reasoning level as "minimal" (gpt-5+); map our
+    // "disable" semantic to that so reasoning is suppressed where supported.
+    body.reasoning_effort =
+      args.reasoningEffort === "disable" ? "minimal" : args.reasoningEffort;
   }
 
   return body;
