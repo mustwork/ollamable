@@ -62,6 +62,7 @@ import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import MemoryOutlinedIcon from "@mui/icons-material/MemoryOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
+import PsychologyOutlinedIcon from "@mui/icons-material/PsychologyOutlined";
 import ReplayOutlinedIcon from "@mui/icons-material/ReplayOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
@@ -70,7 +71,7 @@ import ThermostatOutlinedIcon from "@mui/icons-material/ThermostatOutlined";
 import TokenOutlinedIcon from "@mui/icons-material/TokenOutlined";
 import TourOutlinedIcon from "@mui/icons-material/TourOutlined";
 import ViewSidebarOutlinedIcon from "@mui/icons-material/ViewSidebarOutlined";
-import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, StepKind, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
+import type { Conversation, ConversationStep, OllamaModel, OllamaModelMeta, ReasoningEffort, StepKind, ToolCallPayload, ToolDefinition } from "@/src/types/chat";
 import { ColorModeToggle } from "@/src/components/color-mode-toggle";
 import {
   createConversation,
@@ -110,6 +111,7 @@ const APP_BAR_HEIGHT = 65;
 const SIDEBAR_COLLAPSED_WIDTH = 44;
 const RIGHT_SIDEBAR_WIDTH = 360;
 const TEMPERATURE_OPTIONS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0];
+const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ["low", "medium", "high"];
 
 interface SortableConversationCardProps {
   conversation: Conversation;
@@ -375,6 +377,7 @@ export function ChatWorkspace() {
     sidebarOpen: true,
     rightSidebarOpen: false,
     modelSectionOpen: false,
+    reasoningEffortSectionOpen: false,
     tempSectionOpen: false,
     maxTokensSectionOpen: false,
     toolsSectionOpen: false,
@@ -407,6 +410,7 @@ export function ChatWorkspace() {
     sidebarOpen,
     rightSidebarOpen,
     modelSectionOpen,
+    reasoningEffortSectionOpen,
     tempSectionOpen,
     maxTokensSectionOpen,
     toolsSectionOpen,
@@ -460,12 +464,13 @@ export function ChatWorkspace() {
   );
 
   const toggleRightSection = useCallback(
-    (key: "modelSectionOpen" | "tempSectionOpen" | "maxTokensSectionOpen" | "toolsSectionOpen" | "clientSectionOpen") => {
+    (key: "modelSectionOpen" | "reasoningEffortSectionOpen" | "tempSectionOpen" | "maxTokensSectionOpen" | "toolsSectionOpen" | "clientSectionOpen") => {
       setSidebarState((prev) => {
         const opening = !prev[key];
         const next = {
           ...prev,
           modelSectionOpen: false,
+          reasoningEffortSectionOpen: false,
           tempSectionOpen: false,
           maxTokensSectionOpen: false,
           toolsSectionOpen: false,
@@ -914,6 +919,15 @@ export function ChatWorkspace() {
       return "";
     }
 
+    const previewModel = availableModels.find(
+      (m) =>
+        m.name === selectedConversation.model &&
+        m.provider === selectedConversation.provider
+    );
+    const previewReasoningSupported = previewModel
+      ? isReasoningModel(previewModel)
+      : false;
+
     return JSON.stringify(
       buildOpenAIRequestBody({
         model: selectedConversation.model,
@@ -921,11 +935,14 @@ export function ChatWorkspace() {
         tools: activeTools,
         temperature: selectedConversation.temperature,
         maxOutputTokens: selectedConversation.maxOutputTokens,
+        reasoningEffort: previewReasoningSupported
+          ? selectedConversation.reasoningEffort
+          : undefined,
       }),
       null,
       2
     );
-  }, [activeTools, composerValue, selectedConversation]);
+  }, [activeTools, availableModels, composerValue, selectedConversation]);
 
   useEffect(() => {
     if (!selectedConversation && conversations.length > 0) {
@@ -1114,6 +1131,18 @@ export function ChatWorkspace() {
     }));
   }
 
+  function handleReasoningEffortChange(value: ReasoningEffort | undefined) {
+    if (!selectedConversation) {
+      return;
+    }
+
+    updateConversation(selectedConversation.id, (conversation) => ({
+      ...conversation,
+      reasoningEffort: value,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
   async function handleOpenModelMeta() {
     if (!selectedConversation) {
       return;
@@ -1297,6 +1326,13 @@ export function ChatWorkspace() {
       return;
     }
 
+    const streamModel = availableModels.find(
+      (m) =>
+        m.name === nextConversation.model &&
+        m.provider === nextConversation.provider
+    );
+    const streamReasoningSupported = streamModel ? isReasoningModel(streamModel) : false;
+
     const { promise, stop } = backendClientRef.current.startStream(wsSend, {
       conversationId: nextConversation.id,
       model: nextConversation.model,
@@ -1305,6 +1341,7 @@ export function ChatWorkspace() {
       tools: activeTools,
       temperature: nextConversation.temperature,
       maxOutputTokens: nextConversation.maxOutputTokens,
+      reasoningEffort: streamReasoningSupported ? nextConversation.reasoningEffort : undefined,
       onDelta: (partialSteps) => applyDelta(nextConversation.id, partialSteps),
       onStableSteps: (stableSteps) => applyStableSteps(nextConversation.id, stableSteps),
       onMetaEvent: (metaStep) => applyMetaEvent(nextConversation.id, metaStep),
@@ -1601,15 +1638,18 @@ export function ChatWorkspace() {
     ? modelSelectKey(selectedConversation.provider, selectedConversation.model)
     : modelSelectKey(availableModels[0]?.provider, availableModels[0]?.name ?? "");
   const selectedTemperature = selectedConversation?.temperature;
-  const temperatureSupported = selectedConversation
-    ? supportsTemperature(
-        availableModels.find(
-          (m) =>
-            m.name === selectedConversation.model &&
-            m.provider === selectedConversation.provider
-        )
+  const selectedModelObject = selectedConversation
+    ? availableModels.find(
+        (m) =>
+          m.name === selectedConversation.model &&
+          m.provider === selectedConversation.provider
       )
+    : undefined;
+  const temperatureSupported = supportsTemperature(selectedModelObject);
+  const reasoningEffortSupported = selectedModelObject
+    ? isReasoningModel(selectedModelObject)
     : false;
+  const selectedReasoningEffort = selectedConversation?.reasoningEffort;
 
   const canResume = !streaming
     && stoppedConversationId != null
@@ -1705,6 +1745,7 @@ export function ChatWorkspace() {
                       ...prev,
                       rightSidebarOpen: true,
                       modelSectionOpen: true,
+                      reasoningEffortSectionOpen: false,
                       tempSectionOpen: false,
                       maxTokensSectionOpen: false,
                       toolsSectionOpen: false,
@@ -1728,6 +1769,7 @@ export function ChatWorkspace() {
                     updateSidebar({
                       rightSidebarOpen: true,
                       modelSectionOpen: false,
+                      reasoningEffortSectionOpen: false,
                       tempSectionOpen: true,
                       maxTokensSectionOpen: false,
                       toolsSectionOpen: false,
@@ -1748,6 +1790,7 @@ export function ChatWorkspace() {
                     updateSidebar({
                       rightSidebarOpen: true,
                       modelSectionOpen: false,
+                      reasoningEffortSectionOpen: false,
                       tempSectionOpen: false,
                       maxTokensSectionOpen: true,
                       toolsSectionOpen: false,
@@ -1755,6 +1798,27 @@ export function ChatWorkspace() {
                     })
                   }
                   aria-label="Open max output tokens settings"
+                  size="small"
+                />
+              ) : null}
+              {selectedReasoningEffort != null && reasoningEffortSupported ? (
+                <Chip
+                  icon={<PsychologyOutlinedIcon />}
+                  label={selectedReasoningEffort}
+                  color="primary"
+                  clickable
+                  onClick={() =>
+                    updateSidebar({
+                      rightSidebarOpen: true,
+                      modelSectionOpen: false,
+                      reasoningEffortSectionOpen: true,
+                      tempSectionOpen: false,
+                      maxTokensSectionOpen: false,
+                      toolsSectionOpen: false,
+                      clientSectionOpen: false,
+                    })
+                  }
+                  aria-label="Open reasoning effort settings"
                   size="small"
                 />
               ) : null}
@@ -2501,6 +2565,42 @@ export function ChatWorkspace() {
                           return items;
                         })()}
                       </List>
+                    </Collapse>
+                  </Box>
+
+                  <Divider />
+
+                  <Box data-tour="reasoning-effort-section">
+                    <ListItemButton
+                      onClick={() => toggleRightSection("reasoningEffortSectionOpen")}
+                      sx={{ mx: -2, px: 2, py: 0.5 }}
+                      disabled={!reasoningEffortSupported}
+                    >
+                      <Typography variant="overline" color="text.secondary" sx={{ flexGrow: 1 }}>
+                        Reasoning Effort
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+                        {reasoningEffortSupported && selectedReasoningEffort ? selectedReasoningEffort : ""}
+                      </Typography>
+                      {reasoningEffortSectionOpen ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
+                    </ListItemButton>
+                    <Collapse in={reasoningEffortSectionOpen}>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+                        {REASONING_EFFORT_OPTIONS.map((val) => (
+                          <Chip
+                            key={val}
+                            label={val}
+                            size="small"
+                            variant={selectedReasoningEffort === val ? "filled" : "outlined"}
+                            color={selectedReasoningEffort === val ? "primary" : "default"}
+                            clickable
+                            onClick={() =>
+                              handleReasoningEffortChange(selectedReasoningEffort === val ? undefined : val)
+                            }
+                            disabled={!reasoningEffortSupported}
+                          />
+                        ))}
+                      </Stack>
                     </Collapse>
                   </Box>
 

@@ -98,7 +98,7 @@ export class ConnectionHandler {
     if (msg.type === "chat.send") {
       const toolNames = (msg.tools ?? []).map((t) => t.name).join(", ");
       console.log(
-        `[ws] <- chat.send  conversation=${msg.conversationId}  model=${msg.model}  steps=${msg.steps.length}  tools=[${toolNames}]  temp=${msg.temperature ?? "default"}  maxTokens=${msg.maxOutputTokens ?? "default"}`
+        `[ws] <- chat.send  conversation=${msg.conversationId}  model=${msg.model}  steps=${msg.steps.length}  tools=[${toolNames}]  temp=${msg.temperature ?? "default"}  maxTokens=${msg.maxOutputTokens ?? "default"}  reasoning=${msg.reasoningEffort ?? "default"}`
       );
       await this.handleChatSend(msg);
     }
@@ -107,7 +107,7 @@ export class ConnectionHandler {
   private async handleChatSend(
     msg: Extract<ClientMessage, { type: "chat.send" }>
   ): Promise<void> {
-    const { conversationId, model, provider, tools, temperature, maxOutputTokens } = msg;
+    const { conversationId, model, provider, tools, temperature, maxOutputTokens, reasoningEffort } = msg;
     const controller = new AbortController();
     this.abortControllers.set(conversationId, controller);
 
@@ -133,6 +133,7 @@ export class ConnectionHandler {
           tools,
           temperature,
           maxOutputTokens,
+          reasoningEffort,
           signal: controller.signal,
           onDelta: (partialSteps) => {
             this.send({

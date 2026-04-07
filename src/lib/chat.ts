@@ -17,6 +17,7 @@ export interface SidebarState {
   sidebarOpen: boolean;
   rightSidebarOpen: boolean;
   modelSectionOpen: boolean;
+  reasoningEffortSectionOpen: boolean;
   tempSectionOpen: boolean;
   maxTokensSectionOpen: boolean;
   toolsSectionOpen: boolean;
@@ -42,6 +43,7 @@ const DEFAULT_SIDEBAR_STATE: SidebarState = {
   sidebarOpen: true,
   rightSidebarOpen: false,
   modelSectionOpen: false,
+  reasoningEffortSectionOpen: false,
   tempSectionOpen: false,
   maxTokensSectionOpen: false,
   toolsSectionOpen: false,

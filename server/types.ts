@@ -31,6 +31,8 @@ export interface UsagePayload {
   stopReason?: string;
 }
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface ConversationStep {
   id: string;
   kind: StepKind;
@@ -82,6 +84,7 @@ export type ClientMessage =
       tools: ToolDefinition[];
       temperature?: number;
       maxOutputTokens?: number;
+      reasoningEffort?: ReasoningEffort;
     }
   | { type: "chat.stop"; conversationId: string }
   | { type: "ping" };

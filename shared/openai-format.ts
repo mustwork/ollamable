@@ -34,6 +34,7 @@ export function buildOpenAIRequestBody(args: {
   tools: FormatTool[];
   temperature?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: "low" | "medium" | "high";
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: args.model,
@@ -50,6 +51,10 @@ export function buildOpenAIRequestBody(args: {
 
   if (args.maxOutputTokens != null) {
     body.max_tokens = args.maxOutputTokens;
+  }
+
+  if (args.reasoningEffort != null) {
+    body.reasoning_effort = args.reasoningEffort;
   }
 
   return body;

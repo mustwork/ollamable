@@ -12,7 +12,7 @@
  *  - Temperature is a top-level field, not nested in `options`
  */
 
-import type { ConversationStep, ToolDefinition } from "./types.js";
+import type { ConversationStep, ReasoningEffort, ToolDefinition } from "./types.js";
 import type { ProviderConfig } from "./provider-config.js";
 import { randomUUID } from "node:crypto";
 import { toOpenAIMessages, parseToolSchema } from "../shared/openai-format.js";
@@ -93,10 +93,11 @@ export async function streamOpenAIResponse(args: {
   tools: ToolDefinition[];
   temperature?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   onDelta: (steps: ConversationStep[]) => void;
   signal?: AbortSignal;
 }): Promise<ConversationStep[]> {
-  const { config, model, steps, tools, temperature, maxOutputTokens, onDelta, signal } = args;
+  const { config, model, steps, tools, temperature, maxOutputTokens, reasoningEffort, onDelta, signal } = args;
 
   const body: Record<string, unknown> = {
     model,
@@ -121,6 +122,10 @@ export async function streamOpenAIResponse(args: {
 
   if (maxOutputTokens != null) {
     body.max_tokens = maxOutputTokens;
+  }
+
+  if (reasoningEffort != null) {
+    body.reasoning_effort = reasoningEffort;
   }
 
   const response = await fetch(`${config.baseUrl}/chat/completions`, {

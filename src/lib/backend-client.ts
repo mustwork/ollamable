@@ -1,6 +1,7 @@
 import type {
   ConversationStep,
   MetaEventPayload,
+  ReasoningEffort,
   ToolDefinition,
 } from "@/src/types/chat";
 
@@ -39,6 +40,7 @@ interface StreamRequest {
   tools: ToolDefinition[];
   temperature?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   onDelta: (steps: ConversationStep[]) => void;
   onStableSteps: (steps: ConversationStep[]) => void;
   onMetaEvent: (step: ConversationStep) => void;
@@ -102,7 +104,7 @@ export class BackendClient {
     send: (data: unknown) => void,
     request: StreamRequest
   ): { promise: Promise<ConversationStep[]>; stop: () => void } {
-    const { conversationId, model, provider, steps, tools, temperature, maxOutputTokens } = request;
+    const { conversationId, model, provider, steps, tools, temperature, maxOutputTokens, reasoningEffort } = request;
 
     const promise = new Promise<ConversationStep[]>((resolve, reject) => {
       this.pending.set(conversationId, { request, resolve, reject });
@@ -117,6 +119,7 @@ export class BackendClient {
       tools,
       temperature,
       maxOutputTokens,
+      reasoningEffort,
     });
 
     const stop = () => {

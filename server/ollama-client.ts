@@ -1,4 +1,4 @@
-import type { ConversationStep, ToolDefinition } from "./types.js";
+import type { ConversationStep, ReasoningEffort, ToolDefinition } from "./types.js";
 import { randomUUID } from "node:crypto";
 
 const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434/api";
@@ -80,8 +80,9 @@ export function buildOllamaChatBody(args: {
   stream: boolean;
   temperature?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
 }) {
-  const { model, steps, tools, stream, temperature, maxOutputTokens } = args;
+  const { model, steps, tools, stream, temperature, maxOutputTokens, reasoningEffort } = args;
 
   const options: Record<string, unknown> = {};
   if (temperature != null) options.temperature = temperature;
@@ -100,6 +101,7 @@ export function buildOllamaChatBody(args: {
       },
     })),
     ...(Object.keys(options).length > 0 ? { options } : {}),
+    ...(reasoningEffort != null ? { think: reasoningEffort } : {}),
   };
 }
 
@@ -110,12 +112,13 @@ export async function streamOllamaResponse(args: {
   tools: ToolDefinition[];
   temperature?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   onDelta: (steps: ConversationStep[]) => void;
   signal?: AbortSignal;
 }): Promise<ConversationStep[]> {
-  const { baseUrl = DEFAULT_OLLAMA_URL, model, steps, tools, temperature, maxOutputTokens, onDelta, signal } = args;
+  const { baseUrl = DEFAULT_OLLAMA_URL, model, steps, tools, temperature, maxOutputTokens, reasoningEffort, onDelta, signal } = args;
 
-  const body = buildOllamaChatBody({ model, steps, tools, stream: true, temperature, maxOutputTokens });
+  const body = buildOllamaChatBody({ model, steps, tools, stream: true, temperature, maxOutputTokens, reasoningEffort });
   const response = await fetch(`${baseUrl}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

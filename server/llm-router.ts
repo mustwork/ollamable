@@ -4,7 +4,7 @@
  */
 
 import type { ProviderConfig } from "./provider-config.js";
-import type { ConversationStep, ToolDefinition } from "./types.js";
+import type { ConversationStep, ReasoningEffort, ToolDefinition } from "./types.js";
 import { fetchOllamaModelMeta, streamOllamaResponse } from "./ollama-client.js";
 import { fetchOpenAIModels, streamOpenAIResponse } from "./openai-client.js";
 
@@ -72,6 +72,7 @@ export class LlmRouter {
     tools: ToolDefinition[];
     temperature?: number;
     maxOutputTokens?: number;
+    reasoningEffort?: ReasoningEffort;
     onDelta: (steps: ConversationStep[]) => void;
     signal?: AbortSignal;
   }): Promise<ConversationStep[]> {
@@ -85,6 +86,7 @@ export class LlmRouter {
         tools: args.tools,
         temperature: args.temperature,
         maxOutputTokens: args.maxOutputTokens,
+        reasoningEffort: args.reasoningEffort,
         onDelta: args.onDelta,
         signal: args.signal,
       });
@@ -98,6 +100,7 @@ export class LlmRouter {
         tools: args.tools,
         temperature: args.temperature,
         maxOutputTokens: args.maxOutputTokens,
+        reasoningEffort: args.reasoningEffort,
         onDelta: args.onDelta,
         signal: args.signal,
       });

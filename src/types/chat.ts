@@ -46,6 +46,8 @@ export interface UsagePayload {
   stopReason?: string;
 }
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface ConversationStep {
   id: string;
   kind: StepKind;
@@ -69,6 +71,7 @@ export interface Conversation {
   provider?: string;
   temperature?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   systemPrompt: string;
   createdAt: string;
   updatedAt: string;

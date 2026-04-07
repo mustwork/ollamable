@@ -269,6 +269,50 @@ describe("ConnectionHandler", () => {
     }
   });
 
+  it("forwards reasoningEffort from chat.send to the LLM router", async () => {
+    const assistantStep = makeStep("assistant", "Reasoned response.");
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      args.onDelta([assistantStep]);
+      return [assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const donePromise = waitForMessage(ws, (m) => m.type === "chat.done");
+      sendJson(ws, makeChatSend({ reasoningEffort: "high" }));
+      await donePromise;
+
+      expect(mockStreamOllama).toHaveBeenCalledTimes(1);
+      const callArgs = mockStreamOllama.mock.calls[0][0];
+      expect(callArgs.reasoningEffort).toBe("high");
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("omits reasoningEffort when chat.send does not provide one", async () => {
+    const assistantStep = makeStep("assistant", "Plain response.");
+
+    mockStreamOllama.mockImplementation(async (args) => {
+      args.onDelta([assistantStep]);
+      return [assistantStep];
+    });
+
+    const ws = await connectClient();
+    try {
+      const donePromise = waitForMessage(ws, (m) => m.type === "chat.done");
+      sendJson(ws, makeChatSend());
+      await donePromise;
+
+      expect(mockStreamOllama).toHaveBeenCalledTimes(1);
+      const callArgs = mockStreamOllama.mock.calls[0][0];
+      expect(callArgs.reasoningEffort).toBeUndefined();
+    } finally {
+      ws.close();
+    }
+  });
+
   it("preserves conversationId in all response messages", async () => {
     const conversationId = "conv-id-test-123";
     const assistantStep = makeStep("assistant", "Ack.");
