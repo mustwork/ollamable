@@ -7,6 +7,7 @@ import { ConnectionHandler } from "./ws-handler.js";
 import { LlmRouter } from "./llm-router.js";
 import { ToolDispatcher } from "./tool-executor.js";
 import { WebSearchExecutor } from "./tools/web-search.js";
+import { CurlExecutor } from "./tools/curl.js";
 import { loadProviderConfigs } from "./provider-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +43,7 @@ const router = new LlmRouter(providerConfigs);
 // MCP tools are per-connection and delivered via WebSocket tools.update instead.
 const staticDispatcher = new ToolDispatcher();
 staticDispatcher.register(new WebSearchExecutor());
+staticDispatcher.register(new CurlExecutor());
 
 console.log(
   `[server] Providers: ${providerConfigs.map((p) => p.name).join(", ")}`

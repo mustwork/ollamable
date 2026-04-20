@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 import { ToolDispatcher } from "./tool-executor.js";
 import { WebSearchExecutor } from "./tools/web-search.js";
+import { CurlExecutor } from "./tools/curl.js";
 import { McpBridge } from "./tools/mcp-bridge.js";
 import { LlmRouter } from "./llm-router.js";
 import { loadProviderConfigs } from "./provider-config.js";
@@ -34,6 +35,7 @@ export class ConnectionHandler {
     this.mcpBridge = new McpBridge();
 
     this.dispatcher.register(new WebSearchExecutor());
+    this.dispatcher.register(new CurlExecutor());
     this.dispatcher.register(this.mcpBridge);
 
     ws.on("message", (data) => {

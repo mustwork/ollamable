@@ -12,7 +12,9 @@ export type MetaEventKind =
   | "mcp_call"
   | "mcp_result"
   | "search_start"
-  | "search_result";
+  | "search_result"
+  | "fetch_start"
+  | "fetch_result";
 
 export interface MetaEventPayload {
   kind: MetaEventKind;
