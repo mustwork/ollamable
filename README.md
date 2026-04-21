@@ -42,3 +42,5 @@ Then open [http://localhost:3000](http://localhost:3000).
 ## License
 
 [MIT](LICENSE)
+
+<!-- Built with Claude Code - Educational LLM interface explorer -->
